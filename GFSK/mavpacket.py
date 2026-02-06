@@ -3,6 +3,7 @@ from pymavlink import mavutil
 import numpy as np
 
 def mavheartbeat():
+    # Returns unpacked bit array of mavlink heartbeat message
     
     # Mavlink encoder
     mav = mavlink2.MAVLink(None)
@@ -35,7 +36,6 @@ def mavheartbeat():
 def mavreader(byte_list):
     
     byte_data = bytes(byte_list)
-    print(f"byte_data = {byte_data}")
 
     # mavlink parser
     mav = mavutil.mavlink.MAVLink(None, srcSystem=1, srcComponent=1)
