@@ -11,6 +11,7 @@
 from PyQt5 import Qt
 import numpy as np
 from gnuradio import qtgui, analog
+import pmt
 from PyQt5 import QtCore
 from gnuradio import blocks
 from gnuradio import digital
@@ -25,11 +26,11 @@ from gnuradio.eng_arg import eng_float, intx
 from gnuradio import eng_notation
 import sip
 import threading
+from collections import deque
+import time
 
 # mavpacket generator
 from mavpacket import mavheartbeat, mavreader
-
-
 
 class GFSK(gr.top_block, Qt.QWidget):
 
@@ -74,15 +75,24 @@ class GFSK(gr.top_block, Qt.QWidget):
         # 14 bit sync pattern to line up bit streams from rx to tx
         self.sync_word = "11111101001110"
         self.sync_bits = [int(b) for b in self.sync_word]
-        self.heartbeat_with_sync = self.sync_bits + self.heartbeat
-        print(f"self.heartbeat == {self.heartbeat}")
-        print(f"packed self.heartbeat == {np.packbits(self.heartbeat)}")
+        preamble = [0] * 32
+        postamble = [0] * 32
+        # Need to add pre and post amble as GFSK can chop off bytes from beginning and end
+        self.heartbeat_with_sync = preamble + self.sync_bits + self.heartbeat + postamble # add pre and post amble as GFSK cuts off bits
 
+        
+        print(f"==============================\nTRANSMITTED DATA\n==============================")
+        print(f"Transmitted mavlink heartbeat packet:\n")
+        mavreader(np.packbits(self.heartbeat))
+        print(f"\nheartbeat bitstream == {self.heartbeat}")
+        print(f"preamble + sync word + hearbeart + postabmle bitstream == {self.heartbeat_with_sync}")
+        print(f"heartbeat byte stream == {np.packbits(self.heartbeat)}")
+        print(f"==============================\n==============================\n")
         ##################################################
         # Blocks
         ##################################################
 
-        self._delay_range = qtgui.Range(0, 100, 1, 0, 200)
+        self._delay_range = qtgui.Range(0, 100, 1, 0, 200) #2 delay by default
         self._delay_win = qtgui.RangeWidget(self._delay_range, self.set_delay, "Delay", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._delay_win)
         self.qtgui_time_sink_x_0 = qtgui.time_sink_f(
@@ -92,6 +102,7 @@ class GFSK(gr.top_block, Qt.QWidget):
             2, #number of inputs
             None # parent
         )
+                
         self.qtgui_time_sink_x_0.set_update_time(0.10)
         self.qtgui_time_sink_x_0.set_y_axis(-1, 1)
 
@@ -106,7 +117,7 @@ class GFSK(gr.top_block, Qt.QWidget):
         self.qtgui_time_sink_x_0.enable_stem_plot(False)
 
 
-        labels = ['Signal 1', 'Signal 2', 'Signal 3', 'Signal 4', 'Signal 5',
+        labels = ['TX Signal 1', 'RX Signal 2', 'Signal 3', 'Signal 4', 'Signal 5',
             'Signal 6', 'Signal 7', 'Signal 8', 'Signal 9', 'Signal 10']
         widths = [1, 1, 1, 1, 1,
             1, 1, 1, 1, 1]
@@ -135,7 +146,7 @@ class GFSK(gr.top_block, Qt.QWidget):
         self.top_layout.addWidget(self._qtgui_time_sink_x_0_win)
 
         self.digital_gfsk_mod_0 = digital.gfsk_mod(
-            samples_per_symbol=10,
+            samples_per_symbol=2,
             sensitivity=1.0,
             bt=0.35,
             verbose=False,
@@ -143,7 +154,7 @@ class GFSK(gr.top_block, Qt.QWidget):
             do_unpack=False)
         
         self.digital_gfsk_demod_0 = digital.gfsk_demod(
-            samples_per_symbol=10,
+            samples_per_symbol=2,
             sensitivity=1.0,
             gain_mu=0.3,
             mu=0.5,
@@ -168,11 +179,9 @@ class GFSK(gr.top_block, Qt.QWidget):
         )
 
        
-
-
         # Source bitstream
         # heartbeat bitstream in list format
-        self.blocks_vector_source_x_0 = blocks.vector_source_b(tuple(self.heartbeat_with_sync), True, 1, [])
+        self.blocks_vector_source_x_0 = blocks.vector_source_b(tuple(self.heartbeat_with_sync), False, 1, [])
         
         
         # uchar_to_float of input
@@ -182,12 +191,12 @@ class GFSK(gr.top_block, Qt.QWidget):
        
 
         # Add a throttle to control flow rate 
-        self.blocks_throttle_0 = blocks.throttle(gr.sizeof_gr_complex*1, samp_rate, True)
+        self.blocks_throttle_0 = blocks.throttle(gr.sizeof_gr_complex*1, samp_rate, False)
         self.blocks_stream_to_tagged_stream_0 = blocks.stream_to_tagged_stream(gr.sizeof_char, 1, len(self.heartbeat_with_sync), "packet_len")
         self.blocks_repack_bits_bb_0 = blocks.repack_bits_bb(1, 8, "", False, gr.GR_MSB_FIRST)
         self.blocks_repack_bits_bb_1 = blocks.repack_bits_bb(1, 8, "", False, gr.GR_MSB_FIRST)
-        self.blocks_delay_0 = blocks.delay(gr.sizeof_float*1, delay)
-
+        self.blocks_delay_0 = blocks.delay(gr.sizeof_float*1, 0)
+        self.blocks_delay_1 = blocks.delay(gr.sizeof_gr_complex*1, delay)
 
         # Debugging blocks to check mavlink bitstream inputs and outputs
         self.blocks_vector_sink_input = blocks.vector_sink_b()
@@ -215,10 +224,9 @@ class GFSK(gr.top_block, Qt.QWidget):
         
         # stream tagged -> uchar-to-float
         self.connect((self.blocks_stream_to_tagged_stream_0, 0), (self.blocks_uchar_to_float_0_1, 0))
-        # uchar-to-float -> delay
-        self.connect((self.blocks_uchar_to_float_0_1, 0), (self.blocks_delay_0, 0))
         # uchar-to-float -> gui
-        self.connect((self.blocks_delay_0, 0), (self.qtgui_time_sink_x_0, 0))
+        self.connect((self.blocks_uchar_to_float_0_1, 0), (self.qtgui_time_sink_x_0, 0))
+        
 
         #########################
         # TX -> RX
@@ -228,8 +236,10 @@ class GFSK(gr.top_block, Qt.QWidget):
         self.connect((self.digital_gfsk_mod_0, 0), (self.blocks_throttle_0, 0))
         # throttle -> AGC
         self.connect((self.blocks_throttle_0,0),(self.analog_agc_xx_0, 0))
-        # AGC -> GFSK-demod
-        self.connect((self.analog_agc_xx_0, 0), (self.digital_gfsk_demod_0, 0))
+        # AGC -> delay for whole packet to send first
+        self.connect((self.analog_agc_xx_0, 0), (self.blocks_delay_1, 0))
+        # delay to GFSK-demod
+        self.connect((self.blocks_delay_1, 0),(self.digital_gfsk_demod_0, 0))
 
 
 
@@ -241,7 +251,7 @@ class GFSK(gr.top_block, Qt.QWidget):
         # correlator -> uchar-to-float
         self.connect((self.digital_correlate_access_code_tag_xx_0, 0), (self.blocks_uchar_to_float_0, 0))
         # uchar-to-float -> gui
-        self.connect((self.blocks_uchar_to_float_0, 0), (self.qtgui_time_sink_x_0, 1))
+        self.connect((self.blocks_uchar_to_float_0, 0),(self.qtgui_time_sink_x_0, 1))
 
         # Get bitstream, repack it and change it into mavlink msg
         # correlator -> repack
@@ -253,102 +263,40 @@ class GFSK(gr.top_block, Qt.QWidget):
         self.connect((self.blocks_vector_source_x_0, 0), (self.blocks_vector_sink_input, 0))
         self.connect((self.digital_correlate_access_code_tag_xx_0, 0), (self.blocks_vector_sink_output, 0))
         self.connect((self.digital_correlate_access_code_tag_xx_0, 0), (self.blocks_tag_debug_0, 0))
-        
-        
-        # repacking at input for comparison
-        # # stream-to-tagged -> repack
-        # self.connect((self.blocks_stream_to_tagged_stream_0, 0), (self.blocks_repack_bits_bb_1, 0))
-
-        # # repack to uchar-to-float
-        # self.connect((self.blocks_repack_bits_bb_1, 0), (self.blocks_uchar_to_float_0_1, 0))
-
 
         
         
     def get_mav(self):
-        rx_data = list(self.blocks_vector_sink_repack.data())
-        
-        if len(rx_data) == 0:
-            return
-        
-        sync_bytes = 2
-        
-        # MAVLink 2 heartbeat full packet size
-        # Check your original packed heartbeat length
-        expected_packet_bytes = len(np.packbits(self.heartbeat))
-        
-        print(f"\n=== MAVLink Reconstruction ===")
-        print(f"Expected packet size: {expected_packet_bytes} bytes")
-        print(f"RX data length: {len(rx_data)} bytes")
-        print(rx_data)
-        if len(rx_data) >= sync_bytes + expected_packet_bytes:
-            # Extract the full packet including checksum
-            payload = rx_data[sync_bytes:sync_bytes + expected_packet_bytes]
-            
-            print(f"Extracted {len(payload)} bytes")
-            print(f"Payload (hex): {' '.join(f'{b:02X}' for b in payload)}")
-            
-            mavreader(payload)
-            self.blocks_vector_sink_repack.reset()
-
-
-    # funciton to check input and output bitsreams:
-    def check_data(self):
-        tx_data = list(self.blocks_vector_sink_input.data())
         rx_data = list(self.blocks_vector_sink_output.data())
-        
-        # Get the tags to see if sync word was found
-        # We need to access tags differently
-        
-        sync_len = len(self.sync_word)
-        packet_len = len(self.heartbeat)
-        
-        print(f"\n=== Debug Info ===")
-        print(f"TX total length: {len(tx_data)}")
-        print(f"RX total length: {len(rx_data)}")
-        print(f"Sync word: {self.sync_word}")
-        print(f"Expected packet length: {packet_len}")
-        
-        # Check if RX data starts with sync word (it shouldn't if correlator worked)
-        if len(rx_data) >= sync_len:
-            rx_start = ''.join(str(b) for b in rx_data[:sync_len])
-            print(f"RX first {sync_len} bits: {rx_start}")
-            print(f"Does RX start with sync? {rx_start == self.sync_word}")
-            
-            # If RX still has sync word, correlator didn't strip it!
-            if rx_start == self.sync_word:
-                print("⚠️  WARNING: Sync word still in RX data - correlator may not be working!")
-        
-        # Try different offsets to find alignment
-        print(f"\n=== Trying different offsets ===")
-        tx_payload = tx_data[sync_len:sync_len + packet_len]
-        
-        best_ber = 1.0
-        best_offset = 0
-        
-        for offset in range(0, min(50, len(rx_data) - packet_len)):
-            rx_test = rx_data[offset:offset + packet_len]
-            errors = sum(a != b for a, b in zip(tx_payload, rx_test))
-            ber = errors / packet_len
-            
-            if ber < best_ber:
-                best_ber = ber
-                best_offset = offset
-        
-        print(f"Best BER: {best_ber:.6f} at offset {best_offset}")
-        
-        # Show comparison at best offset
-        rx_payload = rx_data[best_offset:best_offset + packet_len]
-        
-        print(f"\n=== Comparison at offset {best_offset} ===")
-        print(f"TX (first 50): {tx_payload[:50]}")
-        print(f"RX (first 50): {rx_payload[:50]}")
-        print(f"TX (last 20):  {tx_payload[-20:]}")
-        print(f"RX (last 20):  {rx_payload[-20:]}")
-        
-        errors = sum(a != b for a, b in zip(tx_payload, rx_payload))
-        print(f"\nBit errors: {errors}/{packet_len}")
-        print(f"BER: {best_ber:.6f}")
+        print(f"==============================\nRECEIVED DATA\n==============================")
+        print(f"Received raw unsliced bit stream: {rx_data}")
+
+        # tags = self.blocks_vector_sink_output.tags()
+        # print(f"all bits from rx_data: {rx_data}")
+        # for t in tags:
+        #     print(
+        #         "offset:", t.offset,
+        #         "key:", pmt.symbol_to_string(t.key),
+        #         "value:", pmt.to_python(t.value)
+        #     )
+        # This parses tags that correlator may have appended to stream into vector_sink_output
+        # We correlator will have put the amount of bits before the payload as named as "frame_start" based on its
+        # access code or 'self.sync_word'
+        frame_tag = next(
+            t for t in self.blocks_vector_sink_output.tags()
+            if pmt.symbol_to_string(t.key) == "frame_start"
+        )
+
+        sync_start = frame_tag.offset
+        payload_start = sync_start
+        payload_end = payload_start + len(self.heartbeat)
+
+        payload_bits = rx_data[payload_start:payload_end]
+        payload = np.packbits(payload_bits)
+        print(f"received payload = {payload}")
+        print(f"\nReceived bitstream converted to mavlink message:\n")
+        mavreader(payload)
+        print(f"\n==============================\n==============================\n")
    
 
 
@@ -387,12 +335,14 @@ def main(top_block_cls=GFSK, options=None):
     tb.flowgraph_started.set()
 
     tb.show()
+    tb.get_mav()
 
-    timer1 = Qt.QTimer()
-    timer1.start(3000)
-    # timer1.timeout.connect(tb.check_data)
-    timer1.timeout.connect(tb.get_mav)
 
+    # timer1 = Qt.QTimer()
+    # timer1.start(3000)
+    # # timer1.timeout.connect(tb.check_data)
+    # timer1.timeout.connect(tb.get_mav)
+    
     def sig_handler(sig=None, frame=None):
         tb.stop()
         tb.wait()
@@ -401,7 +351,7 @@ def main(top_block_cls=GFSK, options=None):
 
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
-
+    tb.stop() #stop flowgraph after one pass imediately
     timer = Qt.QTimer()
     timer.start(500)
     timer.timeout.connect(lambda: None)
@@ -410,3 +360,62 @@ def main(top_block_cls=GFSK, options=None):
 
 if __name__ == '__main__':
     main()
+
+
+# funciton to check input and output bitsreams:
+    # def check_data(self):
+    #     tx_data = list(self.blocks_vector_sink_input.data())
+    #     rx_data = list(self.blocks_vector_sink_output.data())
+        
+    #     # Get the tags to see if sync word was found
+    #     # We need to access tags differently
+        
+    #     sync_len = len(self.sync_word)
+    #     packet_len = len(self.heartbeat)
+        
+    #     print(f"\n=== Debug Info ===")
+    #     print(f"TX total length: {len(tx_data)}")
+    #     print(f"RX total length: {len(rx_data)}")
+    #     print(f"Sync word: {self.sync_word}")
+    #     print(f"Expected packet length: {packet_len}")
+        
+    #     # Check if RX data starts with sync word (it shouldn't if correlator worked)
+    #     if len(rx_data) >= sync_len:
+    #         rx_start = ''.join(str(b) for b in rx_data[:sync_len])
+    #         print(f"RX first {sync_len} bits: {rx_start}")
+    #         print(f"Does RX start with sync? {rx_start == self.sync_word}")
+            
+    #         # If RX still has sync word, correlator didn't strip it!
+    #         if rx_start == self.sync_word:
+    #             print("⚠️  WARNING: Sync word still in RX data - correlator may not be working!")
+        
+    #     # Try different offsets to find alignment
+    #     print(f"\n=== Trying different offsets ===")
+    #     tx_payload = tx_data[sync_len:sync_len + packet_len]
+        
+    #     best_ber = 1.0
+    #     best_offset = 0
+        
+    #     for offset in range(0, min(50, len(rx_data) - packet_len)):
+    #         rx_test = rx_data[offset:offset + packet_len]
+    #         errors = sum(a != b for a, b in zip(tx_payload, rx_test))
+    #         ber = errors / packet_len
+            
+    #         if ber < best_ber:
+    #             best_ber = ber
+    #             best_offset = offset
+        
+    #     print(f"Best BER: {best_ber:.6f} at offset {best_offset}")
+        
+    #     # Show comparison at best offset
+    #     rx_payload = rx_data[best_offset:best_offset + packet_len]
+        
+    #     print(f"\n=== Comparison at offset {best_offset} ===")
+    #     print(f"TX (first 50): {tx_payload[:50]}")
+    #     print(f"RX (first 50): {rx_payload[:50]}")
+    #     print(f"TX (last 20):  {tx_payload[-20:]}")
+    #     print(f"RX (last 20):  {rx_payload[-20:]}")
+        
+    #     errors = sum(a != b for a, b in zip(tx_payload, rx_payload))
+    #     print(f"\nBit errors: {errors}/{packet_len}")
+    #     print(f"BER: {best_ber:.6f}")
