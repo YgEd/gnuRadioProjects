@@ -102,7 +102,9 @@ class GFSK(gr.top_block, Qt.QWidget):
             2, #number of inputs
             None # parent
         )
-                
+
+
+         
         self.qtgui_time_sink_x_0.set_update_time(0.10)
         self.qtgui_time_sink_x_0.set_y_axis(-1, 1)
 
@@ -145,6 +147,26 @@ class GFSK(gr.top_block, Qt.QWidget):
         self._qtgui_time_sink_x_0_win = sip.wrapinstance(self.qtgui_time_sink_x_0.qwidget(), Qt.QWidget)
         self.top_layout.addWidget(self._qtgui_time_sink_x_0_win)
 
+        # qt sink gui to look at GFSK mod signal
+        self.qtgui_sink_x_0 = qtgui.sink_c(
+            1024, #fftsize
+            window.WIN_BLACKMAN_hARRIS, #wintype
+            0, #fc
+            samp_rate, #bw
+            "", #name
+            True, #plotfreq
+            True, #plotwaterfall
+            True, #plottime
+            True, #plotconst
+            None # parent
+        )
+        self.qtgui_sink_x_0.set_update_time(1.0/10)
+        self._qtgui_sink_x_0_win = sip.wrapinstance(self.qtgui_sink_x_0.qwidget(), Qt.QWidget)
+
+        self.qtgui_sink_x_0.enable_rf_freq(False)
+
+        self.top_layout.addWidget(self._qtgui_sink_x_0_win)
+
         self.digital_gfsk_mod_0 = digital.gfsk_mod(
             samples_per_symbol=2,
             sensitivity=1.0,
@@ -181,7 +203,8 @@ class GFSK(gr.top_block, Qt.QWidget):
        
         # Source bitstream
         # heartbeat bitstream in list format
-        self.blocks_vector_source_x_0 = blocks.vector_source_b(tuple(self.heartbeat_with_sync), False, 1, [])
+        # True False value is conditional decidign whether it should be continuously transmitting or not
+        self.blocks_vector_source_x_0 = blocks.vector_source_b(tuple(self.heartbeat_with_sync), True, 1, [])
         
         
         # uchar_to_float of input
@@ -240,6 +263,8 @@ class GFSK(gr.top_block, Qt.QWidget):
         self.connect((self.analog_agc_xx_0, 0), (self.blocks_delay_1, 0))
         # delay to GFSK-demod
         self.connect((self.blocks_delay_1, 0),(self.digital_gfsk_demod_0, 0))
+        # connect qt sink gui to GFSK-mod to visually see signal output
+        self.connect((self.digital_gfsk_mod_0, 0),(self.qtgui_sink_x_0, 0))
 
 
 
@@ -283,9 +308,12 @@ class GFSK(gr.top_block, Qt.QWidget):
         # We correlator will have put the amount of bits before the payload as named as "frame_start" based on its
         # access code or 'self.sync_word'
         frame_tag = next(
-            t for t in self.blocks_vector_sink_output.tags()
-            if pmt.symbol_to_string(t.key) == "frame_start"
+            (t for t in self.blocks_vector_sink_output.tags()
+            if pmt.symbol_to_string(t.key) == "frame_start"),
+            None
         )
+        if frame_tag is None:
+            return
 
         sync_start = frame_tag.offset
         payload_start = sync_start
@@ -330,7 +358,7 @@ def main(top_block_cls=GFSK, options=None):
     qapp = Qt.QApplication(sys.argv)
 
     tb = top_block_cls()
-
+    
     tb.start()
     tb.flowgraph_started.set()
 
@@ -338,10 +366,10 @@ def main(top_block_cls=GFSK, options=None):
     tb.get_mav()
 
 
-    # timer1 = Qt.QTimer()
-    # timer1.start(3000)
-    # # timer1.timeout.connect(tb.check_data)
-    # timer1.timeout.connect(tb.get_mav)
+    timer1 = Qt.QTimer()
+    timer1.start(3000)
+    # timer1.timeout.connect(tb.check_data)
+    timer1.timeout.connect(tb.get_mav)
     
     def sig_handler(sig=None, frame=None):
         tb.stop()
@@ -351,7 +379,7 @@ def main(top_block_cls=GFSK, options=None):
 
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
-    tb.stop() #stop flowgraph after one pass imediately
+    # tb.stop() #stop flowgraph after one pass imediately
     timer = Qt.QTimer()
     timer.start(500)
     timer.timeout.connect(lambda: None)
@@ -387,7 +415,7 @@ if __name__ == '__main__':
             
     #         # If RX still has sync word, correlator didn't strip it!
     #         if rx_start == self.sync_word:
-    #             print("⚠️  WARNING: Sync word still in RX data - correlator may not be working!")
+    #             print("WARNING: Sync word still in RX data - correlator may not be working!")
         
     #     # Try different offsets to find alignment
     #     print(f"\n=== Trying different offsets ===")
