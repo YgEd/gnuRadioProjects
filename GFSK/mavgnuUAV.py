@@ -18,7 +18,7 @@ class my_flowgraph(gr.top_block):
             verbose=False,
             log=False,
             do_unpack=False)
-        self.samp_rate = samp_rate = 64e3
+        self.samp_rate = samp_rate = 100e3
         self.throttle = blocks.throttle(gr.sizeof_gr_complex*1, samp_rate, False)
 
 
@@ -39,7 +39,6 @@ class my_flowgraph(gr.top_block):
         self.connect(self.throttle, self.gfsk_demod)
         self.connect(self.gfsk_demod, self.destination)
         # self.connect(self.gfsk_mod, self.sink)
-
 
 
 def cli_thread(packet_source):

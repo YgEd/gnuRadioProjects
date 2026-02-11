@@ -3,6 +3,27 @@ from gnuradio import gr
 import pmt
 from pymavlink import mavutil
 
+
+
+# whitening scrambles data before modulation so never long runs of identical bits which leads to problems on reconstruction
+# This is because the demodulator needs to know exactly when each bit starts and ends
+# During a identical stretch clock recovery algorithm is guessing where bit boundaries are based on its last restimate so slight drifts add up causing bit shifts
+def whiten(data, seed=0x1FF):
+    lfsr = seed
+    out = []
+    for byte in data:
+        whitened = 0
+        for bit in range(8):
+            # XOR data bit with LFSR output
+            lfsr_bit = (lfsr >> 0) & 1
+            data_bit = (byte >> bit) & 1
+            whitened |= ((data_bit ^ lfsr_bit) << bit)
+            # Advance LFSR (x^9 + x^5 + 1)
+            feedback = ((lfsr >> 0) ^ (lfsr >> 4)) & 1
+            lfsr = (lfsr >> 1) | (feedback << 8)
+        out.append(whitened)
+    return bytearray(out)
+
 class mav_packet_source(gr.sync_block):
     def __init__(self):
         gr.sync_block.__init__(
@@ -31,13 +52,15 @@ class mav_packet_source(gr.sync_block):
         bit_array = np.unpackbits(byte_array)
         return bit_array
     
+    
+    
     def build_packet(self, message, raw=False):
         # Assemble full packet
         if not raw:
             payload_bits = self.string_to_bits(message)
         else:
-            payload_bits = np.unpackbits(np.array(list(message), dtype=np.uint8)).tolist()
-
+            # payload_bits = np.unpackbits(np.array(message, dtype=np.uint8)).tolist()
+            payload_bits = np.unpackbits(message).tolist()
         # ensure the payload length is denoted as the amount of bytes
         payload_len = np.ceil(len(payload_bits) / 8).astype(int)
         # convert payload_len from bytes to bit array
@@ -58,7 +81,12 @@ class mav_packet_source(gr.sync_block):
         return packet
 
     def send_message(self, message, raw=False):
-        packet = self.build_packet(message, raw)
+        if raw:
+            print(f"mavlink packet in byte form: {[int(b) for b in message]}")
+      
+        whitened_msg = whiten(message)
+        print(f"whitened message {whitened_msg}, whiten function ran again: {whiten(whitened_msg)}")
+        packet = self.build_packet(whitened_msg, raw)
         self.packet_queue.extend(packet)
 
     
@@ -156,7 +184,9 @@ class mav_packet_reader(gr.sync_block):
                 # Read payload_len bytes 
                 if len(self.bit_buffer) >= self.payload_len * 8:
                     payload_bits = self.bit_buffer[:self.payload_len * 8]
-                    payload_bytes = self.bits_to_bytes(payload_bits)
+                    unwhitened_bytes = self.bits_to_bytes(payload_bits)
+                    # run whiten again because XOR is the compliment to itself
+                    payload_bytes = whiten(unwhitened_bytes)
 
                     print(f"Received payload: {list(payload_bytes)}")
 
