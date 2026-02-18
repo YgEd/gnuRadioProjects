@@ -97,7 +97,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.rx_interpolation=1
         self.rx_decimation=20
         self.fractional_bw=0.4
-        self.tx_gain_scalar=0.25
+        self.tx_gain_scalar=1
 
     
 
@@ -174,7 +174,8 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.connect(self.gfsk_mod, self.tx_gain)
         self.connect(self.tx_gain, self.qt_freq_sink)
         self.connect(self.tx_gain, self.qt_time_sink)
-        self.connect(self.tx_gain, self.osmosdr_sink)
+        self.connect(self.tx_gain, self.tx_resampler)
+        self.connect(self.tx_resampler, self.osmosdr_sink)
 
 
 def cli_thread(packet_source):
