@@ -9,9 +9,33 @@ import sys
 import sip
 import signal
 from PyQt5 import Qt
+import numpy as np
 
 
+class debug_sink(gr.sync_block):
+    def __init__(self, num_bytes=100):
+        gr.sync_block.__init__(
+            self,
+            name="debug_sink",
+            in_sig=[np.uint8],
+            out_sig=[]
+        )
+        self.num_bytes = num_bytes
+        self.count = 0
+        self.buffer = []
 
+    def work(self, input_items, output_items):
+        for byte in input_items[0]:
+            if self.count < self.num_bytes:
+                self.buffer.append(byte)
+                self.count += 1
+            if self.count == self.num_bytes:
+                print(f"\n=== RAW DEMOD BYTES (first {self.num_bytes}) ===")
+                print("Decimal:", list(self.buffer))
+                print("Binary: ", [format(b, '08b') for b in self.buffer])
+                print("Hex:    ", [hex(b) for b in self.buffer])
+                self.count += 1  # prevent reprinting
+        return len(input_items[0])
 
 class flow_graph(gr.top_block, Qt.QWidget):
     def __init__(self):
@@ -184,7 +208,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
             1024,                # FFT size
             5,  # window type 5 == blackman harris
             self.center_freq,    # center freq for display
-            self.samp_rate,  # bandwidth (use post-resampler rate)
+            self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
             "RX Monitor"
         )
 
@@ -195,6 +219,21 @@ class flow_graph(gr.top_block, Qt.QWidget):
         )
 
         # Adding gui sinks to gui
+
+        # Create the FFT sink
+        self.fft_sink = qtgui.freq_sink_c(
+            1024,              # FFT size
+            5,  # Window type
+            self.center_freq,       # Center frequency (e.g., 915e6)
+            self.sdr_samp_rate,         # Sample rate at this point in the chain
+            "OTA Signal"       # Label
+        )
+        self.fft_sink.set_update_time(0.10)  # Update every 100ms
+        self.fft_sink.set_y_axis(-140, 10)  # dB range
+
+        # Get the Qt widget (needed to actually display it)
+        self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
+        self.fft_win.show()
     
         self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
@@ -203,6 +242,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
 
         
+        self.debug = debug_sink(num_bytes=200)
+
         ##########################
         # Connections
         #########################
@@ -210,11 +251,15 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # gui snks
         self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
         self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        self.connect(self.osmosdr_source, self.fft_sink)
 
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
         self.connect(self.agc, self.gfsk_demod)
+        # self.connect(self.gfsk_demod, self.destination)
+
         self.connect(self.gfsk_demod, self.destination)
+        self.connect(self.gfsk_demod, self.debug)
 
 
 
