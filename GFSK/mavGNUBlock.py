@@ -19,7 +19,7 @@ def log_packet(filepath, direction, **fields):
         if not file_exists:
             writer.writerow([
                 'timestamp', 'direction', 'payload_len',
-                'raw_payload_bytes', 'whitened_payload_bytes', 'packet_bytes'
+                'raw_payload_bytes', 'whitened_payload_bytes', 'packet_bytes', 'message'
             ])
         
         def fmt(data):
@@ -35,7 +35,8 @@ def log_packet(filepath, direction, **fields):
             fields.get('payload_len', ''),
             fmt(fields.get('raw_payload_bytes', '')),
             fmt(fields.get('whitened_payload_bytes', '')),
-            fmt(fields.get('packet_bytes', ''))
+            fmt(fields.get('packet_bytes', '')),
+            fmt(fields.get('message', ''))
         ])
 
 
@@ -133,7 +134,8 @@ class mav_packet_source(gr.sync_block):
             raw_payload_bytes=bytearray(message),
             whitened_payload_bytes=whitened_msg,
             payload_len=len(message),
-            packet_bytes=bytearray(np.packbits(packet_for_log).tolist())
+            packet_bytes=bytearray(np.packbits(packet_for_log).tolist()),
+            message='Success'
         )
         self.packet_queue.extend(packet)
 
@@ -181,7 +183,6 @@ class mav_packet_reader(gr.sync_block):
         self.state = 'SEARCHING'
         self.bit_buffer = []
         self.payload_len = 0
-        self.constructed_bytes = np.array([], dtype=np.uint8)
 
         #SITL connection
         self.master = mavutil.mavlink_connection(sitl_address)
@@ -243,14 +244,29 @@ class mav_packet_reader(gr.sync_block):
                     
                     # construct sync word to self.constructed_bytes for logging
                     # Store raw 48 length bits (matches TX format)
-                    self.constructed_bits.extend(raw_bits)
 
                     # shift byte down 8 leaving higher bits
                     # | concats the lower bits with the higher bits
                     self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
                     print(f"Payload length (majority voted): {self.payload_len} bytes")
                     self.bit_buffer = []
-                    self.state = 'READ_PAYLOAD'
+                    
+                    # Check if payload_len is unusually large
+                    if self.payload_len > 300:
+                        print(f"Payload length exceeds normal Mavlink size, discarding")
+                        # log failed packet
+                        log_packet(log_name, 'RX',
+                            raw_payload_bytes=0,
+                            whitened_payload_bytes=0,
+                            payload_len=self.payload_len,
+                            packet_bytes=0,
+                            message='Packet Corrupted'
+                        )
+
+                        self.state = 'SEARCHING'
+                    else:
+                        self.constructed_bits.extend(raw_bits)
+                        self.state = 'READ_PAYLOAD'
             
             elif self.state == 'READ_PAYLOAD':
                 # Read payload_len bytes 
@@ -272,9 +288,9 @@ class mav_packet_reader(gr.sync_block):
                         raw_payload_bytes=bytearray(payload_bytes),
                         whitened_payload_bytes=unwhitened_bytes,
                         payload_len=self.payload_len,
-                        packet_bytes=packet_bytes
+                        packet_bytes=packet_bytes,
+                        message='Success'
                     )
-                    self.constructed_bytes = np.array([], dtype=np.uint8)
                     # forward raw mavlink bytes to SITL
                     try:
                         self.master.write(payload_bytes)
