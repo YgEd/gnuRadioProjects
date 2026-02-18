@@ -134,9 +134,12 @@ class mav_packet_reader(gr.sync_block):
 
         #SITL connection
         self.master = mavutil.mavlink_connection(sitl_address)
-        self.master.wait_heartbeat()
-        print("Decoder connected to SITL")
-
+        print("Attempting to connect to SITL...")
+        heartbeat_received = self.master.wait_heartbeat(timeout=5)
+        if heartbeat_received:
+            print("Decoder connected to SITL")
+        else:
+            print("Decoder not connected to SITL")
     
     # convert bit array back to byte array
     def bits_to_bytes(self, bits):
