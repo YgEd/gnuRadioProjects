@@ -2,6 +2,42 @@ import numpy as np
 from gnuradio import gr
 import pmt
 from pymavlink import mavutil
+import datetime
+import csv
+import os
+
+# construct logging file name
+now = datetime.datetime.now().isoformat()
+log_name = f"packet-log-{now}.csv"
+
+def log_packet(filepath, direction, **fields):
+    file_exists = os.path.exists(filepath)
+    
+    with open(filepath, 'a', newline='') as f:
+        writer = csv.writer(f)
+        
+        if not file_exists:
+            writer.writerow([
+                'timestamp', 'direction', 'payload_len',
+                'raw_payload_bytes', 'whitened_payload_bytes', 'packet_bytes'
+            ])
+        
+        def fmt(data):
+            if isinstance(data, (bytes, bytearray)):
+                return data.hex(' ')
+            elif isinstance(data, (list, np.ndarray)):
+                return ''.join(str(b) for b in data)
+            return str(data)
+        
+        writer.writerow([
+            datetime.datetime.now().isoformat(),
+            direction,
+            fields.get('payload_len', ''),
+            fmt(fields.get('raw_payload_bytes', '')),
+            fmt(fields.get('whitened_payload_bytes', '')),
+            fmt(fields.get('packet_bytes', ''))
+        ])
+
 
 
 
@@ -75,17 +111,30 @@ class mav_packet_source(gr.sync_block):
             payload_len_bits_voted,  # 48 bits instead of 16
             payload_bits
         ])
-        return packet
+
+        packet_for_log = np.concatenate([
+            self.sync_word,
+            payload_len_bits_voted,  # 48 bits instead of 16
+            payload_bits
+        ])
+
+        
+        return (packet, packet_for_log)
 
     def send_message(self, message, raw=False):
         if raw:
-            # print(f"mavlink packet in byte form: {[int(b) for b in message]}")
+            print(f"mavlink packet in byte form: {[int(b) for b in message]}")
             pass
       
         whitened_msg = whiten(message)
         # print(f"whitened message {whitened_msg}, whiten function ran again: {whiten(whitened_msg)}")
-        packet = self.build_packet(whitened_msg, raw)
-        print(f"full built packet: {packet}")
+        packet, packet_for_log = self.build_packet(whitened_msg, raw)
+        log_packet(log_name, 'TX',
+            raw_payload_bytes=bytearray(message),
+            whitened_payload_bytes=whitened_msg,
+            payload_len=len(message),
+            packet_bytes=bytearray(np.packbits(packet_for_log).tolist())
+        )
         self.packet_queue.extend(packet)
 
     
@@ -132,6 +181,7 @@ class mav_packet_reader(gr.sync_block):
         self.state = 'SEARCHING'
         self.bit_buffer = []
         self.payload_len = 0
+        self.constructed_bytes = np.array([], dtype=np.uint8)
 
         #SITL connection
         self.master = mavutil.mavlink_connection(sitl_address)
@@ -170,6 +220,9 @@ class mav_packet_reader(gr.sync_block):
                         print("Sync word found!")
                         self.bit_buffer = []
                         self.state ='READ_LENGTH'
+                        
+                        # construct sync word to self.constructed_bytes for logging
+                        self.constructed_bits = list(self.sync_word)
             
             elif self.state == 'READ_LENGTH':
                     # Read 3 copies of 16-bit length (48 bits total)
@@ -184,8 +237,14 @@ class mav_packet_reader(gr.sync_block):
                         c = raw_bits[i + 32]
                         voted_bits.append(1 if (a + b + c) >= 2 else 0)
 
+                    # shift left by 48 and append payload bits
+
                     length_bytes = self.bits_to_bytes(voted_bits)
                     
+                    # construct sync word to self.constructed_bytes for logging
+                    # Store raw 48 length bits (matches TX format)
+                    self.constructed_bits.extend(raw_bits)
+
                     # shift byte down 8 leaving higher bits
                     # | concats the lower bits with the higher bits
                     self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
@@ -202,7 +261,20 @@ class mav_packet_reader(gr.sync_block):
                     payload_bytes = whiten(unwhitened_bytes)
 
                     print(f"Received payload: {list(payload_bytes)}")
+                    # construct sync word to self.constructed_bytes for logging
+                    # Store payload bits and pack everything to bytes
+                    self.constructed_bits.extend(payload_bits)
+                    packet_bytes = bytearray(np.packbits(
+                        np.array(self.constructed_bits, dtype=np.uint8)
+                    ).tolist())
 
+                    log_packet(log_name, 'RX',
+                        raw_payload_bytes=bytearray(payload_bytes),
+                        whitened_payload_bytes=unwhitened_bytes,
+                        payload_len=self.payload_len,
+                        packet_bytes=packet_bytes
+                    )
+                    self.constructed_bytes = np.array([], dtype=np.uint8)
                     # forward raw mavlink bytes to SITL
                     try:
                         self.master.write(payload_bytes)
