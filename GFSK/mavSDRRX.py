@@ -198,11 +198,11 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
         self.osmosdr_source.set_gain_mode(False, 0)
-        self.osmosdr_source.set_gain(10, 0)
-        self.osmosdr_source.set_if_gain(20, 0)
-        self.osmosdr_source.set_bb_gain(20, 0)
+        self.osmosdr_source.set_gain(30, 0)
+        self.osmosdr_source.set_if_gain(30, 0)
+        self.osmosdr_source.set_bb_gain(16, 0)
         self.osmosdr_source.set_antenna('RX1', 0)
-        self.osmosdr_source.set_bandwidth(0, 0)
+        self.osmosdr_source.set_bandwidth(0,0)
 
         self.qt_freq_sink = qtgui.freq_sink_c(
             1024,                # FFT size
