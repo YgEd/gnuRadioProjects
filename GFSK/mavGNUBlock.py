@@ -37,8 +37,9 @@ class mav_packet_source(gr.sync_block):
         # potentially self.preamble = [0x55] * 6          # 6 bytes timing recovery self.sync_word = [0xD3, 0x91]       # 2 byte sync word
         # Define preamble: at least 4 bytes / 32 bits
         self.preamble = np.unpackbits(np.array([37,85,85,85,85,85], dtype=np.uint8)).tolist()
-        # Define syncword
-        self.sync_word = np.unpackbits(np.array([85,85,85,93], dtype=np.uint8)).tolist()
+        # Sync word: something that looks NOTHING like the preamble
+        # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
+        self.sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
         # Define postamble: at least 4 bytes / 32 bits
 
         self.packet_queue = []
@@ -122,7 +123,9 @@ class mav_packet_reader(gr.sync_block):
         # VARIABLES
         self.preamble = np.unpackbits(np.array([37,85,85,85,85,85], dtype=np.uint8))
         # Define syncword
-        self.sync_word = np.unpackbits(np.array([85,85,85,93], dtype=np.uint8))
+        # Sync word: something that looks NOTHING like the preamble
+        # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
+        self.sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
         self.sync_len = len(self.sync_word)
 
         # Establish a state machine for easier processing
