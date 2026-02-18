@@ -79,7 +79,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
         # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
         # kind of like PID tuning?
-        self.gain_mu = 0.175 
+        self.gain_mu = 0.25
 
         # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
         # 0.5 means you start sampling within the middle of a period
@@ -126,7 +126,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
                 # 1 -> more open, tolerant ot some offset
                 # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
                 # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
-                cutoff_freq=max((self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1, samp_rate/2 - samp_rate/10),
+                cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
                 # transition width rule of thumb is
                 # transition width ~ cutoff_freq * 0.25
                 transition_width=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1 * 0.25
