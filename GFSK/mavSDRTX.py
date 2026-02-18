@@ -8,7 +8,7 @@ import osmosdr
 import sys
 import sip
 import signal
-
+import time
 
 class flow_graph(gr.top_block,Qt.QWidget):
     def __init__(self):
@@ -150,6 +150,9 @@ class flow_graph(gr.top_block,Qt.QWidget):
             "TX Monitor"
         )
 
+        self.qt_freq_sink.set_update_time(0.10)
+        self.qt_freq_sink.set_y_axis(-140, 10)
+
         self.qt_time_sink = qtgui.time_sink_c(
             1024,               # number of points
             self.sdr_samp_rate, # sample rate
@@ -184,24 +187,25 @@ def cli_thread(packet_source):
     mav.srcComponent = 1
     
     while True:
-        try:
-            cmd = input("Enter command: ")
-        except (KeyboardInterrupt, EOFError):
-            print("\nProgram Killed")
-            Qt.QApplication.quit()
-            return
+        # try:
+        #     cmd = input("Enter command: ")
+        # except (KeyboardInterrupt, EOFError):
+        #     print("\nProgram Killed")
+        #     Qt.QApplication.quit()
+        #     return
         
-        if cmd == 'arm':
-            msg = mav.command_long_encode(1,1,400,0,1,0,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'guided':
-            msg = mav.command_long_encode(1,1,176,0,1,4,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'heart':
-            msg = mav.command_long_encode(1,1,0,0,0,0,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'quit':
-            break
+        # if cmd == 'arm':
+        #     msg = mav.command_long_encode(1,1,400,0,1,0,0,0,0,0,0)
+        #     packet_source.send_message(msg.pack(mav), True)
+    # elif cmd == 'guided':
+        msg = mav.command_long_encode(1,1,176,0,1,4,0,0,0,0,0)
+        packet_source.send_message(msg.pack(mav), True)
+        time.sleep(5)
+        # elif cmd == 'heart':
+        #     msg = mav.command_long_encode(1,1,0,0,0,0,0,0,0,0,0)
+        #     packet_source.send_message(msg.pack(mav), True)
+        # elif cmd == 'quit':
+        #     break
 
 if __name__ == '__main__':
     app = Qt.QApplication(sys.argv)
