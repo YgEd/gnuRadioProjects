@@ -145,7 +145,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         # AGC2 is better as it has tow different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
-            attack_rate=1e-1,   # how fast gain DECREASES (strong signal arrives)
+            attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
             decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)
             reference=1.0,
             gain=1.0
