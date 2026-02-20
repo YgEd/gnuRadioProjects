@@ -18,7 +18,7 @@ def log_packet(filepath, direction, **fields):
         
         if not file_exists:
             writer.writerow([
-                'timestamp', 'direction', 'payload_len',
+                'timestamp', 'direction', 'payload_len', 'payload_len_crc', 'payload_crc',
                 'raw_payload_bytes', 'whitened_payload_bytes', 'packet_bytes', 'message'
             ])
         
@@ -33,6 +33,8 @@ def log_packet(filepath, direction, **fields):
             datetime.datetime.now().isoformat(),
             direction,
             fields.get('payload_len', ''),
+            fmt(fields.get('payload_len_crc','')),
+            fmt(fields.get('payload_crc','')),
             fmt(fields.get('raw_payload_bytes', '')),
             fmt(fields.get('whitened_payload_bytes', '')),
             fmt(fields.get('packet_bytes', '')),
@@ -60,6 +62,31 @@ def whiten(data, seed=0x1FF):
             lfsr = (lfsr >> 1) | (feedback << 8)
         out.append(whitened)
     return bytearray(out)
+
+
+def crc8(data, poly=0x07, init=0x00):
+    crc = init
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) ^ poly) & 0xFF
+            else:
+                crc= (crc << 1) & 0xFF
+    return crc
+
+def crc16(data, poly =0x8005, init=0xFFFF):
+    crc = init
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ poly) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+
+    return crc
+
 
 class mav_packet_source(gr.sync_block):
     def __init__(self):
@@ -93,14 +120,32 @@ class mav_packet_source(gr.sync_block):
     
     
     def build_packet(self, message, raw=False):
+
+
+
         if not raw:
             payload_bits = self.string_to_bits(message)
         else:
             payload_bits = np.unpackbits(message).tolist()
+        
+        payload_bytes = list(np.packbits(np.array(payload_bits, dtype=np.uint8)))
+        payload_crc = crc16(payload_bytes)
+        payload_crc_bits = np.unpackbits(
+            np.array([payload_crc >> 8, payload_crc & 0xFF], dtype=np.uint8).tolist()
+        )
 
         payload_len = np.ceil(len(payload_bits) / 8).astype(int)
+        payload_len_bytes = np.array([payload_len >> 8, payload_len & 0xFF], dtype=np.uint8)
+    
+        # CRC-8 over the 2 length bytes
+        len_crc = crc8(payload_len_bytes)
+
+        len_crc_bits = np.unpackbits(
+            np.array([len_crc], dtype=np.uint8)
+        ).tolist()
+
         payload_len_bits = np.unpackbits(
-            np.array([payload_len >> 8, payload_len & 0xFF], dtype=np.uint8)
+            np.array(payload_len_bytes, dtype=np.uint8)
         ).tolist()
 
         # Repeat length field 3 times for majority voting
@@ -110,7 +155,9 @@ class mav_packet_source(gr.sync_block):
             self.preamble,
             self.sync_word,
             payload_len_bits_voted,  # 48 bits instead of 16
-            payload_bits
+            len_crc_bits,
+            payload_bits,
+            payload_crc_bits
         ])
 
         packet_for_log = np.concatenate([
@@ -119,8 +166,13 @@ class mav_packet_source(gr.sync_block):
             payload_bits
         ])
 
+        crc_for_log = np.concatenate([
+            len_crc_bits,
+            payload_crc_bits
+        ])
+
         
-        return (packet, packet_for_log)
+        return (packet, packet_for_log, crc_for_log)
 
     def send_message(self, message, raw=False):
         if raw:
@@ -129,11 +181,22 @@ class mav_packet_source(gr.sync_block):
       
         whitened_msg = whiten(message)
         # print(f"whitened message {whitened_msg}, whiten function ran again: {whiten(whitened_msg)}")
-        packet, packet_for_log = self.build_packet(whitened_msg, raw)
+        packet, packet_for_log, crc_for_log = self.build_packet(whitened_msg, raw)
+        
+        # Compute CRC bytes directly instead of slicing the bit array
+        payload_len_bytes = [len(message) >> 8, len(message) & 0xFF]
+        len_crc_byte = crc8(payload_len_bytes)
+        
+        payload_bytes_list = list(np.packbits(np.unpackbits(whitened_msg)))
+        payload_crc_val = crc16(payload_bytes_list)
+
+
         log_packet(log_name, 'TX',
             raw_payload_bytes=bytearray(message),
             whitened_payload_bytes=whitened_msg,
             payload_len=len(message),
+            payload_len_crc=bytearray([len_crc_byte]),
+            payload_crc=bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
             packet_bytes=bytearray(np.packbits(packet_for_log).tolist()),
             message='Success'
         )
@@ -227,7 +290,7 @@ class mav_packet_reader(gr.sync_block):
             
             elif self.state == 'READ_LENGTH':
                     # Read 3 copies of 16-bit length (48 bits total)
-                if len(self.bit_buffer) >= 48:
+                if len(self.bit_buffer) >= 56:
                     raw_bits = self.bit_buffer[:48]
 
                     # Majority vote across the 3 copies
@@ -244,42 +307,64 @@ class mav_packet_reader(gr.sync_block):
                     
                     # construct sync word to self.constructed_bytes for logging
                     # Store raw 48 length bits (matches TX format)
+                    received_crc = self.bits_to_bytes(self.bit_buffer[48:56])[0]
+                    expected_crc = crc8(list(length_bytes))
 
-                    # shift byte down 8 leaving higher bits
-                    # | concats the lower bits with the higher bits
-                    self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
-                    print(f"Payload length (majority voted): {self.payload_len} bytes")
-                    self.bit_buffer = []
-                    
-                    # Check if payload_len is unusually large
-                    if self.payload_len > 300:
-                        print(f"Payload length exceeds normal Mavlink size, discarding")
-                        # log failed packet
+                    if received_crc != expected_crc:
+                        print(f"Length CRC FAILED: got {received_crc:#x}, expected {expected_crc:#x}")
                         log_packet(log_name, 'RX',
-                            raw_payload_bytes=0,
-                            whitened_payload_bytes=0,
-                            payload_len=self.payload_len,
-                            packet_bytes=0,
-                            message='Packet Corrupted'
+                            payload_len=0,
+                            payload_len_crc=bytearray([received_crc]),
+                            payload_crc=bytearray(),
+                            raw_payload_bytes=bytearray(),
+                            whitened_payload_bytes=bytearray(),
+                            packet_bytes=bytearray(),
+                            message=f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
                         )
-
+                        self.bit_buffer = []
+                        self.constructed_bits = []
                         self.state = 'SEARCHING'
                     else:
-                        self.constructed_bits.extend(raw_bits)
+                        self.constructed_bits.extend(self.bit_buffer[:56])
+                        self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
+                        print(f"Payload length: {self.payload_len} bytes (CRC OK)")
+                        self.bit_buffer = []
                         self.state = 'READ_PAYLOAD'
+                    
             
             elif self.state == 'READ_PAYLOAD':
+                total_bits_needed = (self.payload_len * 8) + 16
                 # Read payload_len bytes 
-                if len(self.bit_buffer) >= self.payload_len * 8:
+                if len(self.bit_buffer) >= total_bits_needed:
                     payload_bits = self.bit_buffer[:self.payload_len * 8]
+                    crc_bits = self.bit_buffer[self.payload_len * 8: total_bits_needed]
+                    
                     unwhitened_bytes = self.bits_to_bytes(payload_bits)
-                    # run whiten again because XOR is the compliment to itself
-                    payload_bytes = whiten(unwhitened_bytes)
+                    received_crc_bytes = self.bits_to_bytes(crc_bits)
+                    received_crc = self.bits_to_bytes(crc_bits)
+                    received_crc_val = (received_crc[0] << 8) | received_crc[1]
+                    expected_crc_val = crc16(list(unwhitened_bytes))
 
+                    if received_crc_val != expected_crc_val:
+                        print(f"Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
+                        log_packet(log_name, 'RX',
+                            payload_len=self.payload_len,
+                            payload_len_crc=bytearray(),
+                            payload_crc=bytearray(received_crc_bytes),
+                            raw_payload_bytes=bytearray(),
+                            whitened_payload_bytes=unwhitened_bytes,
+                            packet_bytes=bytearray(),
+                            message=f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
+                        )
+                        self.bit_buffer = []
+                        self.constructed_bits = []
+                        self.state = 'SEARCHING'
+                        continue  # <-- skip to next bit, don't fall through
+
+                    payload_bytes = whiten(unwhitened_bytes)
                     print(f"Received payload: {list(payload_bytes)}")
-                    # construct sync word to self.constructed_bytes for logging
-                    # Store payload bits and pack everything to bytes
-                    self.constructed_bits.extend(payload_bits)
+
+                    self.constructed_bits.extend(self.bit_buffer[:total_bits_needed])
                     packet_bytes = bytearray(np.packbits(
                         np.array(self.constructed_bits, dtype=np.uint8)
                     ).tolist())
@@ -288,16 +373,19 @@ class mav_packet_reader(gr.sync_block):
                         raw_payload_bytes=bytearray(payload_bytes),
                         whitened_payload_bytes=unwhitened_bytes,
                         payload_len=self.payload_len,
+                        payload_len_crc=bytearray([crc8(list(self.bits_to_bytes(voted_bits)))]),
+                        payload_crc=bytearray(received_crc_bytes),
                         packet_bytes=packet_bytes,
                         message='Success'
                     )
-                    # forward raw mavlink bytes to SITL
+
                     try:
                         self.master.write(payload_bytes)
                         print("Forwarded to SITL")
                     except Exception as e:
                         print(f"Error forwarding to SITL: {e}")
                     
+                    self.constructed_bits = []
                     self.bit_buffer = []
                     self.state = 'SEARCHING'
 
