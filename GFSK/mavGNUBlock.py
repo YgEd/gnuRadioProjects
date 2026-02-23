@@ -131,8 +131,8 @@ class mav_packet_source(gr.sync_block):
         payload_bytes = list(np.packbits(np.array(payload_bits, dtype=np.uint8)))
         payload_crc = crc16(payload_bytes)
         payload_crc_bits = np.unpackbits(
-            np.array([payload_crc >> 8, payload_crc & 0xFF], dtype=np.uint8).tolist()
-        )
+            np.array([payload_crc >> 8, payload_crc & 0xFF], dtype=np.uint8)
+        ).tolist()
 
         payload_len = np.ceil(len(payload_bits) / 8).astype(int)
         payload_len_bytes = np.array([payload_len >> 8, payload_len & 0xFF], dtype=np.uint8)
@@ -303,7 +303,7 @@ class mav_packet_reader(gr.sync_block):
 
                     # shift left by 48 and append payload bits
 
-                    length_bytes = self.bits_to_bytes(voted_bits)
+                    self.length_bytes = length_bytes = self.bits_to_bytes(voted_bits)
                     
                     # construct sync word to self.constructed_bytes for logging
                     # Store raw 48 length bits (matches TX format)
@@ -373,7 +373,7 @@ class mav_packet_reader(gr.sync_block):
                         raw_payload_bytes=bytearray(payload_bytes),
                         whitened_payload_bytes=unwhitened_bytes,
                         payload_len=self.payload_len,
-                        payload_len_crc=bytearray([crc8(list(self.bits_to_bytes(voted_bits)))]),
+                        payload_len_crc=bytearray([crc8(self.length_bytes)]),
                         payload_crc=bytearray(received_crc_bytes),
                         packet_bytes=packet_bytes,
                         message='Success'
