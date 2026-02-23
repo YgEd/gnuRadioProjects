@@ -88,6 +88,9 @@ def crc16(data, poly =0x8005, init=0xFFFF):
     return crc
 
 
+
+sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
+
 class mav_packet_source(gr.sync_block):
     def __init__(self):
         gr.sync_block.__init__(
@@ -103,7 +106,7 @@ class mav_packet_source(gr.sync_block):
         self.preamble = np.unpackbits(np.array([37,85,85,85,85,85], dtype=np.uint8)).tolist()
         # Sync word: something that looks NOTHING like the preamble
         # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
-        self.sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
+        self.sync_word = sync_word
         # Define postamble: at least 4 bytes / 32 bits
 
         self.packet_queue = []
@@ -239,7 +242,7 @@ class mav_packet_reader(gr.sync_block):
         # Define syncword
         # Sync word: something that looks NOTHING like the preamble
         # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
-        self.sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
+        self.sync_word = sync_word
         self.sync_len = len(self.sync_word)
 
         # Establish a state machine for easier processing
