@@ -100,7 +100,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 
 
 
-sync_word = np.unpackbits(np.array([0xD3, 0x91], dtype=np.uint8)).tolist()
+sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 class mav_packet_source(gr.sync_block):
     def __init__(self):
