@@ -232,6 +232,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # self.connect(self.gfsk_demod, self.destination)
 
         self.connect(self.gfsk_demod, self.destination)
+        self.connect(self.gfsk_demod, self.debug)
 
 
 

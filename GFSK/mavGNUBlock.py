@@ -362,6 +362,12 @@ class mav_packet_reader(gr.sync_block):
 
                     payload_bytes = whiten(unwhitened_bytes)
                     print(f"Received payload: {list(payload_bytes)}")
+                    # construct sync word to self.constructed_bytes for logging
+                    # Store payload bits and pack everything to bytes
+                    self.constructed_bits.extend(payload_bits)
+                    packet_bytes = bytearray(np.packbits(
+                        np.array(self.constructed_bits, dtype=np.uint8)
+                    ).tolist())
 
                     self.constructed_bits.extend(self.bit_buffer[:total_bits_needed])
                     packet_bytes = bytearray(np.packbits(
