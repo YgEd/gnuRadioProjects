@@ -135,12 +135,16 @@ class flow_graph(gr.top_block,Qt.QWidget):
         )
         self.osmosdr_sink.set_sample_rate(self.sdr_samp_rate)
         self.osmosdr_sink.set_center_freq(self.center_freq, 0)
+        self.osmosdr_sink.set_antenna('TX1', 0) # set antenna earlier so that the gain settings apply to that antenna
         self.osmosdr_sink.set_freq_corr(0, 0)
-        self.osmosdr_sink.set_gain(20, 0)        # TX gain - start low
+        self.osmosdr_sink.set_gain(35, 0)        # TX gain - start low
         self.osmosdr_sink.set_if_gain(15, 0)
         self.osmosdr_sink.set_bb_gain(15, 0)
-        self.osmosdr_sink.set_antenna('TX1', 0)
         self.osmosdr_sink.set_bandwidth(0, 0)
+
+        # print(f"For TX 2")
+        # print(self.osmosdr_sink.get_gain("dsa", 0))
+        # print(self.osmosdr_sink.get_gain("system", 0))
 
         self.qt_freq_sink = qtgui.freq_sink_c(
             1024,                # FFT size
@@ -266,6 +270,8 @@ if __name__ == '__main__':
     cli = threading.Thread(target=cli_thread, args=(tb.source,), daemon=True)
     cli.start()
     
+    
+
     app.exec_()
     tb.stop()
     tb.wait()

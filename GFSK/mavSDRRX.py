@@ -12,31 +12,6 @@ from PyQt5 import Qt
 import numpy as np
 
 
-class debug_sink(gr.sync_block):
-    def __init__(self, num_bytes=100):
-        gr.sync_block.__init__(
-            self,
-            name="debug_sink",
-            in_sig=[np.uint8],
-            out_sig=[]
-        )
-        self.num_bytes = num_bytes
-        self.count = 0
-        self.buffer = []
-
-    def work(self, input_items, output_items):
-        for byte in input_items[0]:
-            if self.count < self.num_bytes:
-                self.buffer.append(byte)
-                self.count += 1
-            if self.count == self.num_bytes:
-                print(f"\n=== RAW DEMOD BYTES (first {self.num_bytes}) ===")
-                print("Decimal:", list(self.buffer))
-                print("Binary: ", [format(b, '08b') for b in self.buffer])
-                print("Hex:    ", [hex(b) for b in self.buffer])
-                self.count += 1  # prevent reprinting
-        return len(input_items[0])
-
 class flow_graph(gr.top_block, Qt.QWidget):
     def __init__(self):
         gr.top_block.__init__(self)
@@ -194,6 +169,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_time_unknown_pps(osmosdr.time_spec_t())
         self.osmosdr_source.set_sample_rate(self.sdr_samp_rate)
         self.osmosdr_source.set_center_freq(self.center_freq, 0)
+        self.osmosdr_source.set_antenna('RX1', 0) # set RX antenna earlier to ensure gain is applied to correct port
         self.osmosdr_source.set_freq_corr(0, 0)
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
@@ -201,7 +177,6 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_gain(30, 0)
         self.osmosdr_source.set_if_gain(30, 0)
         self.osmosdr_source.set_bb_gain(16, 0)
-        self.osmosdr_source.set_antenna('RX1', 0)
         self.osmosdr_source.set_bandwidth(0,0)
 
         self.qt_freq_sink = qtgui.freq_sink_c(
@@ -241,9 +216,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
 
-        
-        self.debug = debug_sink(num_bytes=200)
-
+       
         ##########################
         # Connections
         #########################

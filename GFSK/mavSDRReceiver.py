@@ -5,8 +5,6 @@ from mavGNUBlock import mav_packet_reader, mav_packet_source
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 
-
-
 class flow_graph(gr.top_block):
     def __init__(self):
         gr.top_block.__init__(self)
@@ -154,7 +152,12 @@ class flow_graph(gr.top_block):
         # Connections
         #########################
 
+        self.connect(self.source, self.gfsk_mod)
+        self.connect(self.gfsk_mod, self.tx_gain)
+        self.connect(self.tx_gain, self.tx_resampler)
         
+        # throttle for simulation sake
+        self.connect(self.tx_resampler, self.throttle)
         self.connect(self.throttle, self.rx_resampler_lowpass)
         # self.connect(self.tx_resampler, self.rx_resampler_lowpass)
 
@@ -168,19 +171,6 @@ def cli_thread(packet_source):
     mav.srcSystem = 255
     mav.srcComponent = 1
     
-    while True:
-        cmd = input("Enter command: ")
-        if cmd == 'arm':
-            msg = mav.command_long_encode(1,1,400,0,1,0,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'guided':
-            msg = mav.command_long_encode(1,1,176,0,1,4,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'heart':
-            msg = mav.command_long_encode(1,1,0,0,0,0,0,0,0,0,0)
-            packet_source.send_message(msg.pack(mav), True)
-        elif cmd == 'quit':
-            break
 
 if __name__ == '__main__':
     tb = flow_graph()
@@ -193,5 +183,4 @@ if __name__ == '__main__':
     tb.wait()
 
         
-
 
