@@ -254,27 +254,39 @@ def cli_thread(packet_source):
 
 if __name__ == '__main__':
     app = Qt.QApplication(sys.argv)
-
-    # allos sigint signals from cli thread to kill entire program
-    signal.signal(signal.SIGINT, lambda *args: Qt.QApplication.quit())
-   # Need a timer so Python can process signals (Qt blocks Python's signal handling otherwise)
-    timer = Qt.QTimer()
-    timer.timeout.connect(lambda: None)
-    timer.start(200)
-
     tb = flow_graph()
     tb.show()
+    app.processEvents()
+
+    def sig_handler(sig=None, frame=None):
+        print("\nCaught SIGINT, shutting down...")
+        tb.stop()
+        tb.wait()
+        Qt.QApplication.quit()
+
+    def noop():
+        pass
+
+    signal.signal(signal.SIGINT, sig_handler)
+
+    timer = Qt.QTimer()
+    timer.start(500)
+    timer.timeout.connect(noop)
+
     tb.start()
     
     # CLI needs to be in a separate thread now since app.exec_() blocks
     cli = threading.Thread(target=cli_thread, args=(tb.source,), daemon=True)
     cli.start()
     
-    
 
-    app.exec_()
-    tb.stop()
-    tb.wait()
+    try:
+        app.exec_()
+    except KeyboardInterrupt:
+        sig_handler()
+    finally:
+        tb.stop()
+        tb.wait()
 
         
 
