@@ -16,7 +16,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
     def __init__(self):
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("Ouput RX bassaband")
+        self.setWindowTitle("Ouput RX bandpass")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -179,19 +179,19 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_bb_gain(16, 0)
         self.osmosdr_source.set_bandwidth(0,0)
 
-        self.qt_freq_sink = qtgui.freq_sink_c(
-            1024,                # FFT size
-            5,  # window type 5 == blackman harris
-            self.center_freq,    # center freq for display
-            self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
-            "RX Monitor"
-        )
+        # self.qt_freq_sink = qtgui.freq_sink_c(
+        #     1024,                # FFT size
+        #     5,  # window type 5 == blackman harris
+        #     self.center_freq,    # center freq for display
+        #     self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
+        #     "RX Monitor"
+        # )
 
-        self.qt_time_sink = qtgui.time_sink_c(
-            1024,               # number of points
-            self.samp_rate, # sample rate
-            "RX Time Domain"
-        )
+        # self.qt_time_sink = qtgui.time_sink_c(
+        #     1024,               # number of points
+        #     self.samp_rate, # sample rate
+        #     "RX Time Domain"
+        # )
 
         # Adding gui sinks to gui
 
@@ -208,13 +208,13 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         # Get the Qt widget (needed to actually display it)
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
-        self.fft_win.show()
+        self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
+        # self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
+        # self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
 
-        self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
+        # self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
+        # self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
 
        
         ##########################
@@ -222,8 +222,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         #########################
 
         # gui snks
-        self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
-        self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        # self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
+        # self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
         self.connect(self.osmosdr_source, self.fft_sink)
 
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
@@ -232,7 +232,6 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # self.connect(self.gfsk_demod, self.destination)
 
         self.connect(self.gfsk_demod, self.destination)
-        self.connect(self.gfsk_demod, self.debug)
 
 
 
@@ -243,12 +242,31 @@ if __name__ == '__main__':
     tb = flow_graph()
     tb.show()
     app.processEvents()
-    tb.start()
-   
-    app.exec_()
-    tb.stop()
-    tb.wait()
 
+    def sig_handler(sig=None, frame=None):
+        print("\nCaught SIGINT, shutting down...")
+        tb.stop()
+        tb.wait()
+        Qt.QApplication.quit()
+
+    def noop():
+        pass
+
+    signal.signal(signal.SIGINT, sig_handler)
+
+    timer = Qt.QTimer()
+    timer.start(500)
+    timer.timeout.connect(noop)
+
+    tb.start()
+
+    try:
+        app.exec_()
+    except KeyboardInterrupt:
+        sig_handler()
+    finally:
+        tb.stop()
+        tb.wait()
         
 
 
