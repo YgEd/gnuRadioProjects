@@ -26,7 +26,7 @@ def log_packet(filename, direction, **fields):
     
     with open(filepath, 'a', newline='') as f:
         writer = csv.writer(f)
-        
+
         if not file_exists:
             writer.writerow([
                 'timestamp', 'direction', 'payload_len', 'payload_len_crc', 'payload_crc',
@@ -359,21 +359,6 @@ class mav_packet_reader(gr.sync_block):
                     received_crc_val = (received_crc[0] << 8) | received_crc[1]
                     expected_crc_val = crc16(list(unwhitened_bytes))
 
-                    if received_crc_val != expected_crc_val:
-                        print(f"Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
-                        log_packet(log_name, 'RX',
-                            payload_len=self.payload_len,
-                            payload_len_crc=bytearray(),
-                            payload_crc=bytearray(received_crc_bytes),
-                            raw_payload_bytes=bytearray(),
-                            whitened_payload_bytes=unwhitened_bytes,
-                            packet_bytes=bytearray(),
-                            message=f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
-                        )
-                        self.bit_buffer = []
-                        self.constructed_bits = []
-                        self.state = 'SEARCHING'
-                        continue  # <-- skip to next bit, don't fall through
 
                     payload_bytes = whiten(unwhitened_bytes)
                     print(f"Received payload: {list(payload_bytes)}")
@@ -382,6 +367,22 @@ class mav_packet_reader(gr.sync_block):
                     packet_bytes = bytearray(np.packbits(
                         np.array(self.constructed_bits, dtype=np.uint8)
                     ).tolist())
+
+                    if received_crc_val != expected_crc_val:
+                        print(f"Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
+                        log_packet(log_name, 'RX',
+                            raw_payload_bytes=bytearray(payload_bytes),
+                            whitened_payload_bytes=unwhitened_bytes,
+                            payload_len=self.payload_len,
+                            payload_len_crc=bytearray([crc8(self.length_bytes)]),
+                            payload_crc=bytearray(received_crc_bytes),
+                            packet_bytes=packet_bytes,
+                            message=f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
+                        )
+                        self.bit_buffer = []
+                        self.constructed_bits = []
+                        self.state = 'SEARCHING'
+                        continue  # <-- skip to next bit, don't fall through
 
                     log_packet(log_name, 'RX',
                         raw_payload_bytes=bytearray(payload_bytes),
