@@ -10,7 +10,18 @@ import os
 now = datetime.datetime.now().isoformat()
 log_name = f"packet-log-{now}.csv"
 
-def log_packet(filepath, direction, **fields):
+def log_packet(filename, direction, **fields):
+
+    log_dir = "packet-logs"
+
+    # Create directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+
+    # Build full file path inside packet-logs
+    filepath = os.path.join(log_dir, filename)
+
+    file_exists = os.path.exists(filepath)
+
     file_exists = os.path.exists(filepath)
     
     with open(filepath, 'a', newline='') as f:
