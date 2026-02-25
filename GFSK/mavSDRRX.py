@@ -108,8 +108,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Blocks
         #######################
 
-        # self.destination = mav_packet_reader()
-        self.destination = mav_packet_reader(metrics_logger=self.metrics_logger)
+
        
 
         # resampler and lowpass all in one
@@ -220,6 +219,9 @@ class flow_graph(gr.top_block, Qt.QWidget):
             logger=self.metrics_logger
         )
        
+        # self.destination = mav_packet_reader()
+        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger)
+
         ##########################
         # Connections
         #########################
