@@ -91,13 +91,23 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
 
+        # TX interpolation and decimation amounts for rational resampler ratio
         self.tx_interpolation=20
         self.tx_decimation=1
         
+        # RX interpolation and decimation amounts for rational resampler ratio
         self.rx_interpolation=1
         self.rx_decimation=20
+        # Fractional bw for TX rational resampler
         self.fractional_bw=0.4
+        # TX gain scalar constant
         self.tx_gain_scalar=1
+
+        ##########################
+        # BladeRF source variables
+        ##########################
+
+        self.sdr_RF_gain = 35       
 
     
 
@@ -137,7 +147,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.osmosdr_sink.set_center_freq(self.center_freq, 0)
         self.osmosdr_sink.set_antenna('TX1', 0) # set antenna earlier so that the gain settings apply to that antenna
         self.osmosdr_sink.set_freq_corr(0, 0)
-        self.osmosdr_sink.set_gain(35, 0)        # TX gain - start low
+        self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)        # TX gain - start low
         self.osmosdr_sink.set_if_gain(15, 0)
         self.osmosdr_sink.set_bb_gain(15, 0)
         self.osmosdr_sink.set_bandwidth(0, 0)

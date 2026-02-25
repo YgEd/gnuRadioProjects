@@ -10,6 +10,7 @@ import sip
 import signal
 from PyQt5 import Qt
 import numpy as np
+from rf_metrics import mav_packet_reader_with_metrics, RFMetricsProbe, MetricsLogger
 
 
 class flow_graph(gr.top_block, Qt.QWidget):
@@ -107,7 +108,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Blocks
         #######################
 
-        self.destination = mav_packet_reader()
+        # self.destination = mav_packet_reader()
+        self.destination = mav_packet_reader(metrics_logger=self.metrics_logger)
        
 
         # resampler and lowpass all in one
@@ -210,12 +212,13 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        # self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
-        # self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
-
-        # self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        # self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
-
+        self.metrics_logger = MetricsLogger()
+        self.metrics_probe = RFMetricsProbe(
+            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samples_per_symbol=self.samples_per_symbol,
+            center_freq=self.center_freq,
+            logger=self.metrics_logger
+        )
        
         ##########################
         # Connections
@@ -229,6 +232,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
         self.connect(self.agc, self.gfsk_demod)
+        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         # self.connect(self.gfsk_demod, self.destination)
 
         self.connect(self.gfsk_demod, self.destination)
