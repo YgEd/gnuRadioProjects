@@ -9,15 +9,14 @@ import sys
 import sip
 import signal
 from PyQt5 import Qt
-
-
+import numpy as np
 
 
 class flow_graph(gr.top_block, Qt.QWidget):
     def __init__(self):
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("Ouput RX bassaband")
+        self.setWindowTitle("Ouput RX bandpass")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -79,7 +78,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
         # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
         # kind of like PID tuning?
-        self.gain_mu = 0.175 
+        self.gain_mu = 0.25
 
         # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
         # 0.5 means you start sampling within the middle of a period
@@ -126,7 +125,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
                 # 1 -> more open, tolerant ot some offset
                 # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
                 # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
-                cutoff_freq=max((self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1, samp_rate/2 - samp_rate/10),
+                cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
                 # transition width rule of thumb is
                 # transition width ~ cutoff_freq * 0.25
                 transition_width=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1 * 0.25
@@ -145,7 +144,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         # AGC2 is better as it has tow different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
-            attack_rate=1e-1,   # how fast gain DECREASES (strong signal arrives)
+            attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
             decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)
             reference=1.0,
             gain=1.0
@@ -170,50 +169,68 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_time_unknown_pps(osmosdr.time_spec_t())
         self.osmosdr_source.set_sample_rate(self.sdr_samp_rate)
         self.osmosdr_source.set_center_freq(self.center_freq, 0)
+        self.osmosdr_source.set_antenna('RX1', 0) # set RX antenna earlier to ensure gain is applied to correct port
         self.osmosdr_source.set_freq_corr(0, 0)
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
         self.osmosdr_source.set_gain_mode(False, 0)
-        self.osmosdr_source.set_gain(10, 0)
-        self.osmosdr_source.set_if_gain(20, 0)
-        self.osmosdr_source.set_bb_gain(20, 0)
-        self.osmosdr_source.set_antenna('RX1', 0)
-        self.osmosdr_source.set_bandwidth(0, 0)
+        self.osmosdr_source.set_gain(30, 0)
+        self.osmosdr_source.set_if_gain(30, 0)
+        self.osmosdr_source.set_bb_gain(16, 0)
+        self.osmosdr_source.set_bandwidth(0,0)
 
-        self.qt_freq_sink = qtgui.freq_sink_c(
-            1024,                # FFT size
-            5,  # window type 5 == blackman harris
-            self.center_freq,    # center freq for display
-            self.samp_rate,  # bandwidth (use post-resampler rate)
-            "RX Monitor"
-        )
+        # self.qt_freq_sink = qtgui.freq_sink_c(
+        #     1024,                # FFT size
+        #     5,  # window type 5 == blackman harris
+        #     self.center_freq,    # center freq for display
+        #     self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
+        #     "RX Monitor"
+        # )
 
-        self.qt_time_sink = qtgui.time_sink_c(
-            1024,               # number of points
-            self.samp_rate, # sample rate
-            "RX Time Domain"
-        )
+        # self.qt_time_sink = qtgui.time_sink_c(
+        #     1024,               # number of points
+        #     self.samp_rate, # sample rate
+        #     "RX Time Domain"
+        # )
 
         # Adding gui sinks to gui
+
+        # Create the FFT sink
+        self.fft_sink = qtgui.freq_sink_c(
+            1024,              # FFT size
+            5,  # Window type
+            self.center_freq,       # Center frequency (e.g., 915e6)
+            self.sdr_samp_rate,         # Sample rate at this point in the chain
+            "OTA Signal"       # Label
+        )
+        self.fft_sink.set_update_time(0.10)  # Update every 100ms
+        self.fft_sink.set_y_axis(-140, 10)  # dB range
+
+        # Get the Qt widget (needed to actually display it)
+        self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
+        self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
+        # self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
+        # self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
 
-        self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
+        # self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
+        # self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
 
-        
+       
         ##########################
         # Connections
         #########################
 
         # gui snks
-        self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
-        self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        # self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
+        # self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        self.connect(self.osmosdr_source, self.fft_sink)
 
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
         self.connect(self.agc, self.gfsk_demod)
+        # self.connect(self.gfsk_demod, self.destination)
+
         self.connect(self.gfsk_demod, self.destination)
 
 
@@ -225,12 +242,31 @@ if __name__ == '__main__':
     tb = flow_graph()
     tb.show()
     app.processEvents()
-    tb.start()
-   
-    app.exec_()
-    tb.stop()
-    tb.wait()
 
+    def sig_handler(sig=None, frame=None):
+        print("\nCaught SIGINT, shutting down...")
+        tb.stop()
+        tb.wait()
+        Qt.QApplication.quit()
+
+    def noop():
+        pass
+
+    signal.signal(signal.SIGINT, sig_handler)
+
+    timer = Qt.QTimer()
+    timer.start(500)
+    timer.timeout.connect(noop)
+
+    tb.start()
+
+    try:
+        app.exec_()
+    except KeyboardInterrupt:
+        sig_handler()
+    finally:
+        tb.stop()
+        tb.wait()
         
 
 
