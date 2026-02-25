@@ -290,13 +290,16 @@ if __name__ == '__main__':
     cli.start()
     
 
+    # ensure that bladeRF front end actually stops transmitting
     try:
-        app.exec_()
+        sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
     finally:
-        tb.stop()
-        tb.wait()
+        try:
+            tb._shutdown()
+        except Exception:
+            pass
 
         
 
