@@ -94,13 +94,14 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
 
-        self.tx_interpolation=20
-        self.tx_decimation=1
-        
+        # RX interpolation and decimation ratio for rational resampler
         self.rx_interpolation=1
         self.rx_decimation=20
         self.fractional_bw=0.4
         self.tx_gain_scalar=1
+
+        # SDR RF gain
+        self.sdr_RF_gain = 30
 
     
 
@@ -175,7 +176,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
         self.osmosdr_source.set_gain_mode(False, 0)
-        self.osmosdr_source.set_gain(30, 0)
+        self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
         self.osmosdr_source.set_if_gain(30, 0)
         self.osmosdr_source.set_bb_gain(16, 0)
         self.osmosdr_source.set_bandwidth(0,0)
