@@ -177,7 +177,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_iq_balance_mode(0, 0)
         self.osmosdr_source.set_gain_mode(False, 0)
         self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
-        self.osmosdr_source.set_if_gain(30, 0)
+        self.osmosdr_source.set_if_gain(10, 0)
         self.osmosdr_source.set_bb_gain(16, 0)
         self.osmosdr_source.set_bandwidth(0,0)
 
@@ -217,7 +217,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
             center_freq=self.center_freq,
-            logger=self.metrics_logger
+            logger=self.metrics_logger,
+            sensitivity=self.sensitivity
         )
        
         # self.destination = mav_packet_reader()
