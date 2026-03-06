@@ -44,6 +44,7 @@ import os
 import datetime
 import threading
 from scipy.signal import welch
+from collections import deque
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +200,9 @@ def bin_doppler(doppler_hz):
     return 'severe'
 
 def bin_jitter(jitter_ns):
-    if jitter_ns < 10:   return 'low'
-    if jitter_ns <= 50:  return 'medium'
+    jitter_norm = jitter_ns * 1e-6
+    if jitter_norm < 10:   return 'low'
+    if jitter_norm <= 50:  return 'medium'
     return 'high'
 
 def bin_ber(ber):
@@ -229,7 +231,7 @@ class RFMetricsProbe(gr.sync_block):
 
     WINDOW_SIZE = 4096   # samples per measurement window at 100 kHz
 
-    def __init__(self, samp_rate, samples_per_symbol, center_freq, logger):
+    def __init__(self, samp_rate, samples_per_symbol, center_freq, logger, sensitivity=0):
         gr.sync_block.__init__(
             self,
             name='RFMetricsProbe',
@@ -240,12 +242,13 @@ class RFMetricsProbe(gr.sync_block):
         self.samples_per_symbol = samples_per_symbol
         self.center_freq        = center_freq
         self.logger             = logger
+        self.sensitivity = sensitivity
 
         self._buffer     = []
         self._noise_ref  = None   # set during known-silence calibration
 
         # Running list of peak frequencies for Doppler baseline estimation
-        self._freq_history = []
+        self._freq_history = deque(maxlen=50)
 
     # ------------------------------------------------------------------
     # SNR ESTIMATION
@@ -292,28 +295,116 @@ class RFMetricsProbe(gr.sync_block):
     # Change from baseline = Doppler.
     # ------------------------------------------------------------------
     def _estimate_freq_offset(self, samples):
+
+        # compute exact expected tone frequencies from first principles
+        if self.sensitivity != 0:
+            f_dev = (self.sensitivity * self.samp_rate) / (2 * np.pi)
+            expected_tones = np.array([+f_dev, -f_dev])
+
+
         N   = len(samples)
-        fft = np.fft.fft(samples, n=N)
+
+        # use hanning window as it is a moderately narrow window (narrow main lob) while having low enough side lobe amplitude
+        window = np.hanning(N)
+        windowed_samples = window * samples
+
+        # Add zero padding to increase frequency resolution
+        # Padding 4*N interpolates the spectrum giving finer grid of frequencies bins to find peak on
+        fft_size = 4*N
+        fft = np.fft.fft(windowed_samples, n=fft_size)
         fft = np.fft.fftshift(fft)
-        freqs = np.fft.fftfreq(N, d=1.0/self.samp_rate)
+        freqs = np.fft.fftfreq(fft_size, d=1.0/self.samp_rate)
         freqs = np.fft.fftshift(freqs)
 
         # Find dominant frequency component
         magnitudes = np.abs(fft)
-        peak_idx   = np.argmax(magnitudes)
-        peak_freq  = freqs[peak_idx]
 
-        # Accumulate history for baseline
-        self._freq_history.append(peak_freq)
-        if len(self._freq_history) > 50:
-            self._freq_history.pop(0)
+        # Don't look at entire spectrum for peaks look at around DC where you predict the signal to be
+
+
+        # search_bw_hz = 10000.0 what I had for general search not GFSK
+
+        # search within + or - search_bw of where the tone "should" be
+
+        search_bw_hz = f_dev * 0.3
+        measured_tones = []
+        for expected in expected_tones:
+            mask = np.abs(freqs - expected) <= search_bw_hz
+            if not np.any(mask):
+                continue
+            restricted = np.where(mask, magnitudes, 0.0)
+            peak_idx = np.argmax(restricted)
+
+
+            if 1 <= peak_idx <= len(magnitudes) - 2:
+                left = magnitudes[peak_idx - 1]
+                center = magnitudes[peak_idx]
+                right = magnitudes[peak_idx + 1]
+                # Parabolic interpolation formula — solves for the offset from peak_idx
+                denom = (left - 2*center + right)
+
+                if denom != 0:
+                    delta_bin = 0.5 * (left - right)/denom
+                else:
+                    delta_bin = 0
+                bin_spacing_hz = freqs[1] - freqs[0]
+                peak_freq = freqs[peak_idx] + delta_bin * bin_spacing_hz
+            else:
+                peak_freq = freqs[peak_idx]
+        
+        if len(measured_tones) < 1:
+            return 0.0, 0.0
+
+        search_mask = np.abs(freqs) <= search_bw_hz
+        # restricted_magnitudes = np.where(search_mask, magnitudes, 0.0)
+        # peak_idx   = np.argmax(restricted_magnitudes)
+        # peak_freq_coarse = freqs[peak_idx]
+
+        # Parabolic interpolatio of max amplitude around peak
+        # true peak almost never falls directly on bin center
+        # fitting a parabola through the peak and two neighbors
+        # --- Frequency offset = measured tone position minus expected position ---
+        # Average the offset across both tones for a more robust estimate
+        offsets = [measured - expected for expected, measured, _ in measured_tones]
+        freq_offset_hz = np.mean(offsets)
+
+        # --- You can also detect modulation index error ---
+        # If both tones are visible, the actual deviation tells you if the
+        # modulator is hitting the right depth
+        if len(measured_tones) == 2:
+            actual_separation = abs(measured_tones[0][1] - measured_tones[1][1])
+            expected_separation = 2 * f_dev
+            modulation_index_error = (actual_separation - expected_separation) / expected_separation
+        else:
+            modulation_index_error = None
+
+        # Sanity Check - Reject implausible peaks
+        # Implausible peaks mean that the peak does not have a sificiently large amplitude differnece from noise
+        # Check your peak to median magnitude of your samples as a rough SNR check
+        # Tune the threshold (6x in this case) to link budget 
+        # noise_floor_estimate = np.median(magnitudes[search_mask])
+        # peak_magnitude = magnitudes[peak_idx]
+        
+        # if peak_magnitude < 6 * noise_floor_estimate:
+        #     # Not confident, reuse last estimate
+        #     if len(self._freq_history) > 0:
+        #         peak_freq = self._freq_history[-1]
+        #     else:
+        #         peak_freq = 0
+
+
 
         # freq_offset is peak relative to 0 (center already tuned out by SDR)
         freq_offset_hz = peak_freq
+        # History accumlation that uses collections.deque instead of pop
+        # pop is O(N) collections.deque is O(1)
+        #         # Accumulate history for baseline
+        self._freq_history.append(freq_offset_hz)
 
         # Doppler: deviation from running median (removes static offset)
         if len(self._freq_history) >= 10:
-            baseline = np.median(self._freq_history)
+            # use trimmed slice to exclude most recent point from baseline
+            baseline = np.median(list(self._freq_history)[:-1])
             doppler_hz = peak_freq - baseline
         else:
             doppler_hz = 0.0
@@ -379,6 +470,9 @@ class RFMetricsProbe(gr.sync_block):
                     doppler_hz=doppler,
                     jitter_ns=jitter
                 )
+
+                # # JUST FOR SIMULATION
+                # self.logger.log_packet_outcome(success=True, ber=0.0)
 
         return len(samples)
 
