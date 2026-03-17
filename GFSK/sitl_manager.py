@@ -230,8 +230,10 @@ def _sitl_process(
         #     last_telem['link_quality'] = msg.rssi
 
         # ── 4. Write CSV row for all messages we care about ──
-        loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
-                    'ATTITUDE', 'RC_CHANNELS'}
+        # loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
+        #             'ATTITUDE', 'RC_CHANNELS'}
+        
+        loggable = {'HEARTBEAT', 'STATUSTEXT'}
         if t in loggable:
             with open(telem_path, 'a', newline='') as f:
                 writer = csv.writer(f)
