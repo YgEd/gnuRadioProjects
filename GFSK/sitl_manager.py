@@ -392,17 +392,17 @@ class SITLManager:
     # ── Internal ───────────────────────────────────────────────────────────
 
     def _launch_sitl(self):
-        """Launch sim_vehicle.py as a subprocess."""
         cmd = [
             'python3',
-            # Update this path to your ArduPilot install location
             os.path.expanduser('~/Desktop/ardupilot/Tools/autotest/sim_vehicle.py'),
             '-v', self.sitl_vehicle,
             '--no-rebuild',
-            # Expose primary port (MAVProxy/GCS) and a second output for
-            # any additional consumers (e.g. QGC running in parallel)
             '--out=127.0.0.1:14550',
             '--out=127.0.0.1:14551',
+            '--param=SYSID_MYGCS=255',
+            '--param=FS_GCS_ENABLE=1',
+            '--param=FS_GCS_TIMEOUT=5',
+            '--mavproxy-args=--cmd="set heartbeat 0; set srcSystem 255"',
         ] + self.sitl_extra_args
 
         print(f"[SITLManager] Launching: {' '.join(cmd)}")
@@ -410,10 +410,9 @@ class SITLManager:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,   # process group so we can kill cleanly
+            preexec_fn=os.setsid,
         )
 
-        # Stream SITL stdout in a background thread so it doesn't block
         def _log_sitl_output(proc):
             for line in iter(proc.stdout.readline, b''):
                 print(f"[SITL-SIM] {line.decode(errors='replace').rstrip()}")
@@ -426,8 +425,8 @@ class SITLManager:
         ).start()
 
         print(f"[SITLManager] sim_vehicle.py PID={self._sitl_proc.pid}, "
-              f"waiting 8s for boot ...")
-        time.sleep(8)   # ArduCopter SITL typically needs ~5-8s to start up
+            f"waiting 8s for boot ...")
+        time.sleep(8)
 
     def _drain_telemetry(self):
         """
