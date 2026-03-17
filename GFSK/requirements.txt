@@ -32,6 +32,7 @@ fastcrc==0.3.5
 fasteners==0.18
 fonttools==4.46.0
 fs==2.4.16
+future==1.0.0
 html5lib==1.1
 httplib2==0.20.4
 idna==3.6
