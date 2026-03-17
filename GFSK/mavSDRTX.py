@@ -257,10 +257,15 @@ def cli_thread(packet_source):
 
     while True:
         if transmitting:
-            msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
-            packet_source.send_message(msg.pack(mav), True)
-            print("[TX] Packet sent")
-        time.sleep(5)
+            hb = mav.heartbeat_encode(
+                type=mavlink2.MAV_TYPE_GCS,
+                autopilot=mavlink2.MAV_AUTOPILOT_INVALID,
+                base_mode=0,
+                custom_mode=0,
+                system_status=mavlink2.MAV_STATE_ACTIVE
+            )
+            packet_source.send_message(hb.pack(mav), True)
+        time.sleep(1)
 
 if __name__ == '__main__':
     app = Qt.QApplication(sys.argv)

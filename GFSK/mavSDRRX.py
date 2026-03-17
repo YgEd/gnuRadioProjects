@@ -124,7 +124,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
                 # Then to get cutoff freq we calculate
                 # cutoff_freq = occupied_bandwidth * 0.75 to 1 (this 0.75 to 1 scalar is a trade off between (next two lines))
                 # 0.75 -> tighter, less noise, but sensitive to freq offset
-                # 1 -> more open, tolerant ot some offset
+                # 1 -> more open, tolerant to some offset
                 # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
                 # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
                 cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
@@ -144,7 +144,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         #     gain=1.0         # initial gain estimate
         # )
 
-        # AGC2 is better as it has tow different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
+        # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
             attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
             decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)

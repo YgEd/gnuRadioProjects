@@ -45,6 +45,7 @@ import datetime
 import threading
 from scipy.signal import welch
 from collections import deque
+import sitl_manager as sitl
 
 
 # ---------------------------------------------------------------------------
@@ -252,19 +253,25 @@ class RFMetricsProbe(gr.sync_block):
 
     # ------------------------------------------------------------------
     # SNR ESTIMATION
-    # Uses Welch PSD — signal power is in the occupied bandwidth,
+    # Uses Welch Power Spectral Density (PSD) — signal power is in the occupied bandwidth,
     # noise power is in the spectral guard regions.
     # ------------------------------------------------------------------
     def _estimate_snr(self, samples):
         freqs, psd = welch(samples, fs=self.samp_rate,
                            nperseg=512, return_onesided=False)
+        
+        # output of welch orders frequency bins in unintuitive manner of positive samples then negative
+        # for example if you had a bandwidth of 2 MHz with bins of 1MHz surrounding a center frequency of 0 you'd see [0, 1, -1] instead of what you'd expect [-1, 0, 1]
+        # to organize this into the intuitive manner you need to call np.fft.fftshift()
         freqs = np.fft.fftshift(freqs)
         psd   = np.fft.fftshift(psd)
 
         # Occupied bandwidth for GFSK ≈ symbol_rate * 2 * h
         # With sensitivity=0.4, h ≈ sensitivity * samples_per_symbol / pi ≈ 0.51
         # Occupied BW ≈ 25000 * 2 * 0.51 ≈ 25.5 kHz — use 30 kHz to be safe
-        signal_bw_hz = 30e3
+        h = self.sensitivity * (self.samples_per_symbol / np.pi)
+        symbol_rate = self.samp_rate/self.samples_per_symbol
+        signal_bw_hz = np.ceil(symbol_rate * 2 * h)
         sig_mask  = np.abs(freqs) <= (signal_bw_hz / 2)
 
         # Noise region: outside signal BW but inside filter passband
@@ -312,11 +319,13 @@ class RFMetricsProbe(gr.sync_block):
         # Padding 4*N interpolates the spectrum giving finer grid of frequencies bins to find peak on
         fft_size = 4*N
         fft = np.fft.fft(windowed_samples, n=fft_size)
-        fft = np.fft.fftshift(fft)
-        freqs = np.fft.fftfreq(fft_size, d=1.0/self.samp_rate)
-        freqs = np.fft.fftshift(freqs)
+        fft = np.fft.fftshift(fft) # fft holds the actual complex numbers representing magnitude and face of each frequency
+        freqs = np.fft.fftfreq(fft_size, d=1.0/self.samp_rate) # d is the sample spacing which would be equal to 1/samp rate
+        freqs = np.fft.fftshift(freqs) #freqs holds and array of the frequency values
 
-        # Find dominant frequency component
+        # fft holds the actual complex number and freqs holds the array of frequencies
+
+        # np.abs caclulates the amplitudes
         magnitudes = np.abs(fft)
 
         # Don't look at entire spectrum for peaks look at around DC where you predict the signal to be
@@ -427,6 +436,12 @@ class RFMetricsProbe(gr.sync_block):
             return None
 
         # Sub-sample interpolation for each crossing
+        # Because crossing don't happen exactly at an index, you assume that the between any idx and idx+1 the signal is a striagh line.
+        # so the line is y(t) = real[idx] + t * (real[idx+1] - real[idx])
+        # Because in this case we want to find t where the crossing actually happens (at 0) we set the equation = 0 and solve for t
+        #  0 = real[idx] + t * (real[idx+1] - real[idx])
+        #  frac = t = -real[idx] / (real[idx+1] - real[idx])
+        #  so the crossing happens at the time idx+frac
         crossings = []
         for idx in sign_changes:
             if idx + 1 < len(real):
@@ -438,6 +453,7 @@ class RFMetricsProbe(gr.sync_block):
         # Expected crossings at half-symbol intervals
         # (zero crossings happen at ~0.5 and ~1.0 of each symbol period)
         half_sps = self.samples_per_symbol / 2.0
+        # you round where crossing is divided by the half sps to snap it to the the expected position
         expected = np.round(crossings / half_sps) * half_sps
 
         timing_errors_samples = crossings - expected
@@ -511,7 +527,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, sitl_address='udp:127.0.0.1:14550', metrics_logger=None):
+    def __init__(self, metrics_logger=None):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -521,12 +537,11 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
         # ---- same setup as your original mav_packet_reader ----
         # Import sync_word from mavGNUBlock at runtime to avoid circular import
-        from mavGNUBlock import sync_word, whiten, crc8, crc16, log_packet, log_name
+        from mavGNUBlock import sync_word, whiten, crc8, crc16
         self._whiten     = whiten
         self._crc8       = crc8
         self._crc16      = crc16
-        self._log_packet = log_packet
-        self._log_name   = log_name
+
 
         self.preamble     = np.unpackbits(np.array([37,85,85,85,85,85], dtype=np.uint8))
         self.sync_word    = sync_word
@@ -534,14 +549,12 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.state        = 'SEARCHING'
         self.bit_buffer   = []
         self.payload_len  = 0
+        self._stopped = False
 
-        self.master = mavutil.mavlink_connection(sitl_address)
+        self.sitl = sitl.SITLManager()
         print("Attempting to connect to SITL...")
-        heartbeat_received = self.master.wait_heartbeat(timeout=5)
-        if heartbeat_received:
-            print("Decoder connected to SITL")
-        else:
-            print("Decoder not connected to SITL")
+        self.sitl.start()
+
         # ---- end original setup ----
 
         self.metrics_logger = metrics_logger
@@ -553,6 +566,21 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
         # Rolling outcome history for windowed PER
         self._outcome_history = []
+
+    def stop(self):
+        if not self._stopped:
+            self._stopped = True
+            print("[MavReader] stop() called by GNU radio scheduler")
+            if self.sitl is not None:
+                self.sitl.stop()
+        return True
+    
+    def __del__(self):
+        try:
+            if not self._stopped and self.sitl is not None:
+                self.sitl.stop()
+        except Exception:
+            pass
 
     def bits_to_bytes(self, bits):
         bit_array = np.array(bits, dtype=np.uint8)
@@ -619,15 +647,6 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         if self.metrics_logger:
                             self.metrics_logger.log_packet_outcome(success=False, ber=ber)
 
-                        log_packet(log_name, 'RX',
-                            payload_len=0,
-                            payload_len_crc=bytearray([received_crc]),
-                            payload_crc=bytearray(),
-                            raw_payload_bytes=bytearray(),
-                            whitened_payload_bytes=bytearray(),
-                            packet_bytes=bytearray(),
-                            message=f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
-                        )
                         self.bit_buffer     = []
                         self.constructed_bits = []
                         self.state          = 'SEARCHING'
@@ -662,15 +681,6 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         if self.metrics_logger:
                             self.metrics_logger.log_packet_outcome(success=False, ber=ber)
 
-                        log_packet(log_name, 'RX',
-                            raw_payload_bytes=bytearray(payload_bytes),
-                            whitened_payload_bytes=unwhitened_bytes,
-                            payload_len=self.payload_len,
-                            payload_len_crc=bytearray([crc8(self.length_bytes)]),
-                            payload_crc=bytearray(received_crc_bytes),
-                            packet_bytes=packet_bytes,
-                            message=f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
-                        )
                         self.bit_buffer     = []
                         self.constructed_bits = []
                         self.state = 'SEARCHING'
@@ -680,20 +690,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     ber = self._estimate_ber(success=True)
                     if self.metrics_logger:
                         self.metrics_logger.log_packet_outcome(success=True, ber=ber)
-
-                    log_packet(log_name, 'RX',
-                        raw_payload_bytes=bytearray(payload_bytes),
-                        whitened_payload_bytes=unwhitened_bytes,
-                        payload_len=self.payload_len,
-                        payload_len_crc=bytearray([crc8(self.length_bytes)]),
-                        payload_crc=bytearray(received_crc_bytes),
-                        packet_bytes=packet_bytes,
-                        message='Success'
-                    )
-
                     try:
-                        self.master.write(payload_bytes)
-                        print("Forwarded to SITL")
+                        self.sitl.forward_packet(payload_bytes)
                     except Exception as e:
                         print(f"Error forwarding to SITL: {e}")
 
