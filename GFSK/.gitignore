@@ -1,1 +1,8 @@
 *.dat
+*.csv
+*.tlog
+*.raw
+*.grc
+*.DAT 
+*.bin
+*.param
