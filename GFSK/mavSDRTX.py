@@ -1,7 +1,7 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
-from mavGNUBlock import mav_packet_reader, mav_packet_source
+from mavGNUTXBlock import mav_packet_source
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
@@ -195,7 +195,6 @@ class flow_graph(gr.top_block,Qt.QWidget):
             log=False
         )
 
-        self.debug_sink = mav_packet_reader()  # your existing RX packet block
 
 
 

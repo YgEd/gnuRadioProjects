@@ -1,7 +1,7 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 
-from mavGNUBlock import mav_packet_reader, mav_packet_source
+from mavGNUTXBlock import mav_packet_reader, mav_packet_source
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
@@ -10,7 +10,8 @@ import sip
 import signal
 from PyQt5 import Qt
 import numpy as np
-from rf_metrics import mav_packet_reader_with_metrics, RFMetricsProbe, MetricsLogger
+from mavGNURXBlock import mav_packet_reader_with_metrics
+from rf_metrics import RFMetricsProbe, MetricsLogger
 
 
 class flow_graph(gr.top_block, Qt.QWidget):
