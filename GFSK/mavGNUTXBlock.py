@@ -152,7 +152,7 @@ class mav_packet_source(gr.sync_block):
     # expects bytes
     def build_packet(self, message, raw=False):
        
-        payload_bits = np.unpackbits(message, dytpe=np.uint8)
+        payload_bits = np.unpackbits(message)
         # payload_bits = np.unpackbits(np.array(message, dytpe=np.uint8))
         
         payload_bytes = list(np.packbits(np.array(payload_bits, dtype=np.uint8)))
@@ -237,6 +237,7 @@ class mav_packet_source(gr.sync_block):
         if self.sitl is not None:
             hb_fields = self.sitl.get_heartbeat()
             if hb_fields is not None:
+                print(f"[TX] given hb message is: {hb_fields}")
                 # Reconstruct MAVLink hearbeat message
                 hb_msg = self._mav.heartbeat_encode(
                     type= hb_fields['type'],
@@ -268,3 +269,5 @@ class mav_packet_source(gr.sync_block):
 
         return n_requested
     
+    def stop(self):
+        self.sitl.stop()

@@ -90,7 +90,7 @@ def _sitl_process(
          important ones into telemetry_queue for the main process
     """
       # sigint handling
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # signal.signal(signal.SIGINT, signal.SIG_IGN)
     print(f"[SITL] Connecting to {sitl_address} ...")
 
     # Retry connection — SITL may take a few seconds to boot
@@ -311,7 +311,7 @@ class SITLManager:
         self,
         sitl_address: str = 'udp:127.0.0.1:14550',
         log_dir: str = 'packet-logs',
-        auto_start: bool = True,
+        auto_start: bool = False,
         sitl_vehicle: str = 'ArduCopter',
         sitl_extra_args: list = None,
     ):
@@ -407,8 +407,8 @@ class SITLManager:
             self._mav_proc.join(timeout=5)
             if self._mav_proc.is_alive():
                 self._mav_proc.kill()
-        print("[SITLManager] Resetting terminal settings")
-        self._restore_terminal()
+        # print("[SITLManager] Resetting terminal settings")
+        # self._restore_terminal()
 
         print("[SITLManager] Stopped.")
 
@@ -475,6 +475,7 @@ class SITLManager:
         print(f"[SITLManager] Launching: {' '.join(cmd)}")
         self._sitl_proc = subprocess.Popen(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             preexec_fn=os.setsid,

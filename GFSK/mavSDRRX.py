@@ -1,7 +1,5 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
-
-from mavGNUTXBlock import mav_packet_reader, mav_packet_source
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
