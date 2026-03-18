@@ -6,3 +6,5 @@
 *.DAT 
 *.bin
 *.param
+*.parm
+*.pyc
