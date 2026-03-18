@@ -74,6 +74,7 @@ from pymavlink.dialects.v20 import common as mavlink2
 def _sitl_process(
     sitl_address: str,
     forward_queue: mp.Queue,
+    hb_queue,
     telemetry_queue: mp.Queue,
     stop_event: mp.Event,
     log_dir: str,
@@ -165,14 +166,14 @@ def _sitl_process(
 
        
 
-        # ── 2. Forward decoded RF packets to SITL ──
-        while not forward_queue.empty():
-            try:
-                payload_bytes = forward_queue.get_nowait()
-                conn.write(payload_bytes)
-                print(f"[SITL] Forwarded {len(payload_bytes)}-byte packet to SITL")
-            except Exception as e:
-                print(f"[SITL] Forward error: {e}")
+        # # ── 2. Forward decoded RF packets to SITL ──
+        # while not forward_queue.empty():
+        #     try:
+        #         payload_bytes = forward_queue.get_nowait()
+        #         conn.write(payload_bytes)
+        #         print(f"[SITL] Forwarded {len(payload_bytes)}-byte packet to SITL")
+        #     except Exception as e:
+        #         print(f"[SITL] Forward error: {e}")
 
         # ── 3. Receive and process incoming MAVLink messages ──
         msg = conn.recv_match(blocking=False)
@@ -189,7 +190,22 @@ def _sitl_process(
             last_telem['armed'] = armed
             last_telem['mode'] = msg.custom_mode
             print(f"[SITL] HB — armed={armed} mode={msg.custom_mode} "
-                  f"state={msg.system_status}")
+                  f"state={msg.system_status}\nPassing to mavGNUTXBlock to send")
+            
+            try:
+                hb_queue.put_nowait({
+                    'type': msg.type,
+                    'autopilot': msg.autopilot,
+                    'base_mode': msg.base_mode,
+                    'custom_mode': msg.custom_mode,
+                    'system_status': msg.system_status,
+                    'mavlink_version': msg.mavlink_version,
+                })
+            except Exception as e:
+                print(f"[SITL] When trying to push hearbeat into queue got error:\n{e}")
+                pass
+                
+            
 
         elif t == 'STATUSTEXT':
             statustext = msg.text
@@ -304,6 +320,7 @@ class SITLManager:
         self._forward_queue  = mp.Queue(maxsize=200)
         self._telemetry_queue = mp.Queue(maxsize=500)
         self._stop_event     = mp.Event()
+        self._hb_queue = mp.Queue(maxsize=50)
 
         # SITL subprocess handle (sim_vehicle.py)
         self._sitl_proc: subprocess.Popen = None
@@ -330,6 +347,7 @@ class SITLManager:
                 self.sitl_address,
                 self._forward_queue,
                 self._telemetry_queue,
+                self._hb_queue,
                 self._stop_event,
                 self.log_dir,
             ),
@@ -369,6 +387,13 @@ class SITLManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
+    def get_heartbeat(self):
+        try:
+            return self._hb_queue.get_nowait()
+        except Exception as e:
+            print(f"[SITLManager] Tried to get hearbeat but got error:\n{e}")
+            return None
+    
     def forward_packet(self, payload_bytes: bytes):
         """
         Called by mav_packet_reader_with_metrics on each successfully
