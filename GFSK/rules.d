@@ -1,1 +1,0 @@
-/Users/operator/radioconda/envs/radioconda/lib/udev/rules.d/rtl-sdr.rules/etc/udev/rules.d/
