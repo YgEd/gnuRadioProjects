@@ -194,8 +194,8 @@ def _sitl_process(
         t = msg.get_type()
         if t in FORWARD_TYPES:
             try:
-                packed = msg.pack(conn.mav)  # serialize to raw MAVLink bytes
-                forward_queue.put_nowait(packed)  # rename this queue to forward_queue for clarity
+                
+                forward_queue.put_nowait(msg)  # rename this queue to forward_queue for clarity
             except Exception as e:
                 print(f"[SITL] Pack/queue error: {e}")
         

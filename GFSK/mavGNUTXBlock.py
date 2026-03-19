@@ -209,7 +209,7 @@ class mav_packet_source(gr.sync_block):
                 print(f"[mavGNUTX] given mavlink message is: {msg.get_type()}")
                 
                 print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-                self.send_message(msg)
+                self.send_message(msg.pack(self._mav))
                 
 
 
