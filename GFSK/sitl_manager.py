@@ -447,7 +447,7 @@ class SITLManager:
     def get_latest_telemetry(self) -> dict:
         """Returns a snapshot of the most recent telemetry from SITL."""
         with self._telem_lock:
-            return dict(self._latest_telem)
+            return self._latest_telem
 
     def is_armed(self) -> bool:
         return self.get_latest_telemetry().get('armed', False)
