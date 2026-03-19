@@ -240,6 +240,25 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         self.connect(self.gfsk_demod, self.destination)
 
+    def closeEvent(self, event):
+        """Handle window close button — same cleanup as SIGINT."""
+        self._safe_shutdown()
+        event.accept()
+
+    def _safe_shutdown(self):
+        """Zero RF gains and stop the flow graph cleanly."""
+        print("Shutting down BladeRF TX...")
+        try:
+            # Kill RF output before stopping the scheduler
+            self.osmosdr_source.set_gain(0, 0)
+            self.osmosdr_source.set_if_gain(0, 0)
+            self.osmosdr_source.set_bb_gain(0, 0)
+        except Exception as e:
+            print(f"Warning: could not zero gains: {e}", file=sys.stderr)
+
+        self.stop()
+        self.wait()
+        print("Flow graph stopped.")
 
 
 
@@ -252,9 +271,9 @@ if __name__ == '__main__':
 
     def sig_handler(sig=None, frame=None):
         print("\nCaught SIGINT, shutting down...")
-        tb.stop()
-        tb.wait()
+        tb._safe_shutdown()
         Qt.QApplication.quit()
+
 
     def noop():
         pass
@@ -267,16 +286,10 @@ if __name__ == '__main__':
 
     tb.start()
 
-    # ensure that bladeRF front end actually stops receiving
     try:
         sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
-    finally:
-        try:
-            tb._shutdown()
-        except Exception:
-            pass
         
 
 
