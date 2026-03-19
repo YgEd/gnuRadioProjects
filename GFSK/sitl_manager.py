@@ -211,20 +211,6 @@ def _sitl_process(
                   f"state={msg.system_status}\nPassing to mavGNUTXBlock to send")
             print(f"[SITL] Heart beat message: {msg}")
             
-            try:
-                forward_queue.put_nowait({
-                    'type': msg.type,
-                    'autopilot': msg.autopilot,
-                    'base_mode': msg.base_mode,
-                    'custom_mode': msg.custom_mode,
-                    'system_status': msg.system_status,
-                    'mavlink_version': msg.mavlink_version,
-                })
-            except Exception as e:
-                print(f"[SITL] When trying to push hearbeat into queue got error:\n{e}")
-                pass
-                
-            
 
         elif t == 'STATUSTEXT':
             statustext = msg.text
@@ -337,10 +323,9 @@ class SITLManager:
         self.sitl_extra_args = sitl_extra_args or []
 
         # IPC primitives
-        self._forward_queue  = mp.Queue(maxsize=200)
+        self._forward_queue  = mp.Queue(maxsize=500)
         self._telemetry_queue = mp.Queue(maxsize=500)
         self._stop_event     = mp.Event()
-        self._forward_queue = mp.Queue(maxsize=50)
         self._threads = []
 
         # SITL subprocess handle (sim_vehicle.py)
@@ -372,7 +357,6 @@ class SITLManager:
                 self.sitl_address,
                 self._forward_queue,
                 self._telemetry_queue,
-                self._forward_queue,
                 self._stop_event,
                 self.log_dir,
             ),

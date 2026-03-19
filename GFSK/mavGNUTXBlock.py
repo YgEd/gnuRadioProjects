@@ -179,7 +179,7 @@ class mav_packet_source(gr.sync_block):
         payload_crc_val = crc16(payload_bytes_list)
 
         try:
-            msg = self._mav .parse_char(message) 
+            msg = self._mav.parse_char(message) 
         except Exception as e:
             print(f"[GNUTXBlock] Error when converting payload bytes to mavlink string: {e}")
 
@@ -209,7 +209,7 @@ class mav_packet_source(gr.sync_block):
                 print(f"[mavGNUTX] given mavlink message is: {msg.get_type()}")
                 
                 print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-                self.send_message(msg.pack(self._mav))
+                self.send_message(msg)
                 
 
 
