@@ -220,8 +220,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
             sensitivity=self.sensitivity
         )
        
-        # self.destination = mav_packet_reader()
-        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger)
+        # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
+        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
 
         ##########################
         # Connections

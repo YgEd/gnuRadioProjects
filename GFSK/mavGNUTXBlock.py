@@ -7,6 +7,7 @@ import csv
 import os
 import sitl_manager as sitl
 from pymavlink.dialects.v20 import common as mavlink2
+import time
 
 # construct logging file name
 now = datetime.datetime.now().isoformat()
@@ -96,6 +97,8 @@ class mav_packet_source(gr.sync_block):
         self.sitl = sitl.SITLManager()
         print("[TX] Attempting to start and connect to sitl")
         self.sitl.start()
+        self._time_since_telem = int(time.time())
+        self._time_since_gps = int(time.time())
 
 
 
@@ -178,6 +181,10 @@ class mav_packet_source(gr.sync_block):
         payload_bytes_list = list(np.packbits(np.unpackbits(whitened_msg)))
         payload_crc_val = crc16(payload_bytes_list)
 
+        try:
+            msg = self._mav.parse_char(message) 
+        except Exception as e:
+            print(f"[GNUTXBlock] Error when converting payload bytes to mavlink string: {e}")
 
         packet_info = {
             'raw_payload_bytes':bytearray(message),
@@ -186,13 +193,47 @@ class mav_packet_source(gr.sync_block):
             'payload_len_crc':bytearray([len_crc_byte]),
             'payload_crc':bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
             'packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
-            'message':'Success'
+            'message':msg
         }
 
         if self.metrics_logger is not None:
-            self.metrics_logger(packet_info, success=True, ber='N/A')
+            self.metrics_logger.log_packet_outcome(packet_info, success=True, ber='N/A')
         
         self.packet_queue.extend(packet)
+
+
+    def sendGuard(self, msg, curr_time):
+        # message should be mavlink object
+
+        # if msg is hearbeat send it right away
+        if msg.get_type() == 'HEARTBEAT':
+            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            self.send_message(msg.pack(self._mav))
+
+        # if msg is status send right away
+        if msg.get_type() == 'STATUSTEXT':
+            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            self.send_message(msg.pack(self._mav))
+
+        # if msg is GPS only send if 2 seconds have elapsed since the last time you send GPS
+        if msg.get_type() == 'GLOBAL_POSITION_INT':
+            if self._time_since_gps + 2 < curr_time:
+                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_gps = int(time.time())
+               
+        
+        # only send any other telem message if its been 5 seconds since last telem
+        if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
+            if self._time_since_telem + 5 < curr_time:
+                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_telem = int(time.time())
+        
+        
+
+        
+
 
     
     def work(self, input_items, output_items):
@@ -200,20 +241,14 @@ class mav_packet_source(gr.sync_block):
         n_requested = len(out)
 
         if self.sitl is not None:
-            hb_fields = self.sitl.get_heartbeat()
-            if hb_fields is not None:
-                print(f"[TX] given hb message is: {hb_fields}")
-                # Reconstruct MAVLink hearbeat message
-                hb_msg = self._mav.heartbeat_encode(
-                    type= hb_fields['type'],
-                    autopilot=       hb_fields['autopilot'],
-                    base_mode=       hb_fields['base_mode'],
-                    custom_mode=     hb_fields['custom_mode'],
-                    system_status=   hb_fields['system_status'],
-                    mavlink_version= hb_fields['mavlink_version'],
-                )
-                print("[TX] Sending Hearbeat")
-                self.send_message(hb_msg.pack(self._mav))
+            msg = self.sitl.get_mavlink_msg()
+            if msg is not None:
+                
+                # only send messages at set frequencies based on their type
+                self.sendGuard(msg, int(time.time()))
+                
+
+
 
         if len(self.packet_queue) == 0:
             # output zeros (idle when no data)

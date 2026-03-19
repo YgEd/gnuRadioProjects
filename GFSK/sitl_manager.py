@@ -66,6 +66,7 @@ import signal
 from pymavlink import mavutil
 from pymavlink.dialects.v20 import common as mavlink2
 import termios
+import copy
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,6 @@ def _sitl_process(
     sitl_address: str,
     forward_queue: mp.Queue,
     telemetry_queue: mp.Queue,
-    hb_queue,
     stop_event: mp.Event,
     log_dir: str,
 ):
@@ -152,6 +152,7 @@ def _sitl_process(
             'roll', 'pitch', 'yaw',
             'statustext',
             'link_quality',
+            'raw',
         ])
 
     print(f"[SITL] Telemetry log: {telem_path}")
@@ -161,7 +162,7 @@ def _sitl_process(
         'lat': None, 'lon': None, 'alt_m': None,
         'vx': None, 'vy': None, 'vz': None,
         'roll': None, 'pitch': None, 'yaw': None,
-        'link_quality': None,
+        'link_quality': None, 'raw':None,
     }
 
     while not stop_event.is_set():
@@ -183,7 +184,22 @@ def _sitl_process(
             time.sleep(0.005)
             continue
 
+        # In _sitl_process, replace the per-type forward_queue logic with a single
+        # general forward queue — pack the raw bytes right here
+        FORWARD_TYPES = {
+            'HEARTBEAT', 'GLOBAL_POSITION_INT', 'ATTITUDE',
+            'SYS_STATUS', 'GPS_RAW_INT', 'VFR_HUD', 'STATUSTEXT'
+        }
+
         t = msg.get_type()
+        if t in FORWARD_TYPES:
+            try:
+                
+                forward_queue.put_nowait(msg)  # rename this queue to forward_queue for clarity
+            except Exception as e:
+                print(f"[SITL] Pack/queue error: {e}")
+        
+
         ts = datetime.datetime.now().isoformat()
         statustext = ''
 
@@ -191,23 +207,6 @@ def _sitl_process(
             armed = bool(msg.base_mode & mavlink2.MAV_MODE_FLAG_SAFETY_ARMED)
             last_telem['armed'] = armed
             last_telem['mode'] = msg.custom_mode
-            print(f"[SITL] HB — armed={armed} mode={msg.custom_mode} "
-                  f"state={msg.system_status}\nPassing to mavGNUTXBlock to send")
-            print(f"[SITL] Heart beat message: {msg}")
-            
-            try:
-                hb_queue.put_nowait({
-                    'type': msg.type,
-                    'autopilot': msg.autopilot,
-                    'base_mode': msg.base_mode,
-                    'custom_mode': msg.custom_mode,
-                    'system_status': msg.system_status,
-                    'mavlink_version': msg.mavlink_version,
-                })
-            except Exception as e:
-                print(f"[SITL] When trying to push hearbeat into queue got error:\n{e}")
-                pass
-                
             
 
         elif t == 'STATUSTEXT':
@@ -217,7 +216,6 @@ def _sitl_process(
                 4: 'WARNING', 5: 'NOTICE', 6: 'INFO', 7: 'DEBUG'
             }
             sev = severity_map.get(msg.severity, str(msg.severity))
-            print(f"[SITL] STATUS [{sev}]: {msg.text}")
 
             # Push link-related events to telemetry queue immediately
             text_lower = msg.text.lower()
@@ -230,29 +228,28 @@ def _sitl_process(
                     'timestamp': ts,
                 })
 
-        # elif t == 'GLOBAL_POSITION_INT':
-        #     last_telem['lat'] = msg.lat / 1e7
-        #     last_telem['lon'] = msg.lon / 1e7
-        #     last_telem['alt_m'] = msg.relative_alt / 1000.0
-        #     last_telem['vx'] = msg.vx / 100.0
-        #     last_telem['vy'] = msg.vy / 100.0
-        #     last_telem['vz'] = msg.vz / 100.0
+        elif t == 'GLOBAL_POSITION_INT':
+            last_telem['lat'] = msg.lat / 1e7
+            last_telem['lon'] = msg.lon / 1e7
+            last_telem['alt_m'] = msg.relative_alt / 1000.0
+            last_telem['vx'] = msg.vx / 100.0
+            last_telem['vy'] = msg.vy / 100.0
+            last_telem['vz'] = msg.vz / 100.0
 
-        # elif t == 'ATTITUDE':
-        #     import math
-        #     last_telem['roll']  = math.degrees(msg.roll)
-        #     last_telem['pitch'] = math.degrees(msg.pitch)
-        #     last_telem['yaw']   = math.degrees(msg.yaw)
+        elif t == 'ATTITUDE':
+            import math
+            last_telem['roll']  = math.degrees(msg.roll)
+            last_telem['pitch'] = math.degrees(msg.pitch)
+            last_telem['yaw']   = math.degrees(msg.yaw)
 
-        # elif t == 'RC_CHANNELS':
-        #     # RSSI from RC link as crude link quality proxy (0–255)
-        #     last_telem['link_quality'] = msg.rssi
+        elif t == 'RC_CHANNELS':
+            # RSSI from RC link as crude link quality proxy (0–255)
+            last_telem['link_quality'] = msg.rssi
 
         # ── 4. Write CSV row for all messages we care about ──
-        # loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
-        #             'ATTITUDE', 'RC_CHANNELS'}
+        loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
+                    'ATTITUDE', 'RC_CHANNELS'}
         
-        loggable = {'HEARTBEAT', 'STATUSTEXT'}
         if t in loggable:
             with open(telem_path, 'a', newline='') as f:
                 writer = csv.writer(f)
@@ -322,10 +319,9 @@ class SITLManager:
         self.sitl_extra_args = sitl_extra_args or []
 
         # IPC primitives
-        self._forward_queue  = mp.Queue(maxsize=200)
+        self._forward_queue  = mp.Queue(maxsize=500)
         self._telemetry_queue = mp.Queue(maxsize=500)
         self._stop_event     = mp.Event()
-        self._hb_queue = mp.Queue(maxsize=50)
         self._threads = []
 
         # SITL subprocess handle (sim_vehicle.py)
@@ -357,7 +353,6 @@ class SITLManager:
                 self.sitl_address,
                 self._forward_queue,
                 self._telemetry_queue,
-                self._hb_queue,
                 self._stop_event,
                 self.log_dir,
             ),
@@ -398,9 +393,9 @@ class SITLManager:
             finally:
                 self._sitl_proc = None
         
-        # stop SITL STDOUT reader thread
+        # stop SITL STDOUT reader and telemetry drain thread
         for t in self._threads:
-            t.join(timeout=5)
+            t.join(timeout=10)
         self._threads.clear()
 
         print("[SITLManager] Stopping...")
@@ -416,9 +411,9 @@ class SITLManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def get_heartbeat(self):
+    def get_mavlink_msg(self):
         try:
-            return self._hb_queue.get_nowait()
+            return self._forward_queue.get_nowait()
         except Exception as e:
             # if e == queue.Empty:
             #     print(f"[SITL Mananger] No heartbeat present in queue")
@@ -480,7 +475,7 @@ class SITLManager:
             '--param=SYSID_MYGCS=255',
             '--param=FS_GCS_ENABLE=1',
             '--param=FS_GCS_TIMEOUT=5',
-            '--mavproxy-args=--cmd="set heartbeat 0; set srcSystem 255"',
+            '--mavproxy-args=--daemon',
         ] + self.sitl_extra_args
 
         print(f"[SITLManager] Launching: {' '.join(cmd)}")

@@ -5,6 +5,7 @@ from pymavlink import mavutil
 import csv
 import numpy as np
 from mavGNUTXBlock import sync_word, whiten, crc8, crc16
+from gcsPublisher import GCSPublisher
 
 # Import your existing helpers from mavGNUBlock
 # (whiten, crc8, crc16, log_packet, sync_word, log_name are defined there)
@@ -28,7 +29,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, metrics_logger=None):
+    def __init__(self, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -51,6 +52,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.payload_len  = 0
         self._stopped = False
         self.sitl = None
+        self.publish = publish_to_gcs
+        self.addr = (host, port)
 
         # self.sitl = sitl.SITLManager()
         # print("Attempting to connect to SITL...")
@@ -145,7 +148,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
 
                     if received_crc != expected_crc:
-                        print(f"Length CRC FAILED: got {received_crc:#x}, expected {expected_crc:#x}")
+                        print(f"[GNURXBlock] Length CRC FAILED: got {received_crc:#x}, expected {expected_crc:#x}")
                         # Log packet failure
                         ber = self._estimate_ber(success=False)
                         
@@ -168,7 +171,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         self.state          = 'SEARCHING'
                     else:
                         self.constructed_bits.extend(self.bit_buffer[:56])
-                        print(f"Payload length: {self.payload_len} bytes (CRC OK)")
+                        print(f"[GNURXBlock] Payload length: {self.payload_len} bytes (CRC OK)")
                         self.bit_buffer = []
                         self.state = 'READ_PAYLOAD'
 
@@ -191,7 +194,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     ).tolist())
 
                     if received_crc_val != expected_crc_val:
-                        print(f"Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
+                        print(f"[GNURXBlock] Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
                         ber = self._estimate_ber(success=False)
 
                         
@@ -216,11 +219,12 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     ber = self._estimate_ber(success=True)
                     # turn mavlink message to string to log
                     msg = None
+                    print(f"[GNURXBlock] Payload Found!")
                     try:
                         mav = mavutil.mavlink.MAVLink(None)
                         msg = mav.parse_char(payload_bytes) 
                     except Exception as e:
-                        print(f"[rf_metrics] Error when converting payload bytes to mavlink string: {e}")
+                        print(f"[GNURXBlock] Error when converting payload bytes to mavlink string: {e}")
                         
                     if self.metrics_logger:
                         packet_info = {
@@ -233,6 +237,14 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'message':msg
                             }
                         self.metrics_logger.log_packet_outcome(packet_info, success=True, ber=ber)
+                        if self.publish:
+                            try:
+                                # publish mavlink message to port 8080 for gcs
+                                publisher = GCSPublisher(self.addr)
+                                publisher.publish(payload_bytes)
+                            except Exception as e:
+                                print(f"[GNURXBlock] Failed to publish mavlink message to GCS: {e}")
+
                     # try:
                     #     self.sitl.forward_packet(payload_bytes)
                     # except Exception as e:
