@@ -7,6 +7,7 @@ import csv
 import os
 import sitl_manager as sitl
 from pymavlink.dialects.v20 import common as mavlink2
+import time
 
 # construct logging file name
 now = datetime.datetime.now().isoformat()
@@ -96,6 +97,8 @@ class mav_packet_source(gr.sync_block):
         self.sitl = sitl.SITLManager()
         print("[TX] Attempting to start and connect to sitl")
         self.sitl.start()
+        self._time_since_telem = int(time.time())
+        self._time_since_gps = int(time.time())
 
 
 
@@ -198,6 +201,35 @@ class mav_packet_source(gr.sync_block):
         
         self.packet_queue.extend(packet)
 
+
+    def sendGuard(self, msg, curr_time):
+        # message should be mavlink object
+
+        # if msg is hearbeat send it right away
+        if msg.get_type() == 'HEARTBEAT':
+            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            self.send_message(msg.pack(self._mav))
+            return
+
+        # if msg is GPS only send if 2 seconds have elapsed since the last time you send GPS
+        if msg.get_type() == 'GLOBAL_POSITION_INT':
+            if self._time_since_gps + 2 < curr_time:
+                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_gps = int(time.time())
+                return
+        
+        # only send any other telem message if its been 5 seconds since last telem
+        if self._time_since_telem + 5 < curr_time:
+            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            self.send_message(msg.pack(self._mav))
+            self._time_since_telem = int(time.time())
+        
+        
+
+        
+
+
     
     def work(self, input_items, output_items):
         out = output_items[0]
@@ -206,10 +238,9 @@ class mav_packet_source(gr.sync_block):
         if self.sitl is not None:
             msg = self.sitl.get_mavlink_msg()
             if msg is not None:
-                print(f"[mavGNUTX] given mavlink message is: {msg.get_type()}")
                 
-                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-                self.send_message(msg.pack(self._mav))
+                # only send messages at set frequencies based on their type
+                self.sendGuard(self, msg, int(time.time()))
                 
 
 
