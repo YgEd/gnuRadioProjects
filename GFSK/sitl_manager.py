@@ -152,6 +152,7 @@ def _sitl_process(
             'roll', 'pitch', 'yaw',
             'statustext',
             'link_quality',
+            'raw',
         ])
 
     print(f"[SITL] Telemetry log: {telem_path}")
@@ -161,7 +162,7 @@ def _sitl_process(
         'lat': None, 'lon': None, 'alt_m': None,
         'vx': None, 'vy': None, 'vz': None,
         'roll': None, 'pitch': None, 'yaw': None,
-        'link_quality': None,
+        'link_quality': None, 'raw':None,
     }
 
     while not stop_event.is_set():
@@ -182,6 +183,9 @@ def _sitl_process(
         if msg is None:
             time.sleep(0.005)
             continue
+
+        # capture raw telemetry so we can easily pass to RX then to GCS
+        last_telem['raw'] = msg
 
         t = msg.get_type()
         ts = datetime.datetime.now().isoformat()
@@ -238,21 +242,20 @@ def _sitl_process(
             last_telem['vy'] = msg.vy / 100.0
             last_telem['vz'] = msg.vz / 100.0
 
-        # elif t == 'ATTITUDE':
-        #     import math
-        #     last_telem['roll']  = math.degrees(msg.roll)
-        #     last_telem['pitch'] = math.degrees(msg.pitch)
-        #     last_telem['yaw']   = math.degrees(msg.yaw)
+        elif t == 'ATTITUDE':
+            import math
+            last_telem['roll']  = math.degrees(msg.roll)
+            last_telem['pitch'] = math.degrees(msg.pitch)
+            last_telem['yaw']   = math.degrees(msg.yaw)
 
-        # elif t == 'RC_CHANNELS':
-        #     # RSSI from RC link as crude link quality proxy (0–255)
-        #     last_telem['link_quality'] = msg.rssi
+        elif t == 'RC_CHANNELS':
+            # RSSI from RC link as crude link quality proxy (0–255)
+            last_telem['link_quality'] = msg.rssi
 
         # ── 4. Write CSV row for all messages we care about ──
-        # loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
-        #             'ATTITUDE', 'RC_CHANNELS'}
+        loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
+                    'ATTITUDE', 'RC_CHANNELS'}
         
-        loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT'}
         if t in loggable:
             with open(telem_path, 'a', newline='') as f:
                 writer = csv.writer(f)
@@ -271,6 +274,7 @@ def _sitl_process(
                     last_telem['yaw'],
                     statustext,
                     last_telem['link_quality'],
+                    last_telem['raw']
                 ])
 
         # Push latest snapshot to main process at low rate
@@ -437,9 +441,11 @@ class SITLManager:
         except Exception:
             print("[SITLManager] Forward queue full — packet dropped")
 
-    def get_latest_telemetry(self) -> dict:
+    def get_latest_telemetry(self, raw=False) -> dict:
         """Returns a snapshot of the most recent telemetry from SITL."""
         with self._telem_lock:
+            if raw:
+                return dict(self._latest_telem['raw'])
             return dict(self._latest_telem)
 
     def is_armed(self) -> bool:

@@ -190,7 +190,7 @@ class mav_packet_source(gr.sync_block):
         }
 
         if self.metrics_logger is not None:
-            self.metrics_logger(packet_info, success=True, ber='N/A')
+            self.metrics_logger.log_packet_outcome(packet_info, success=True, ber='N/A')
         
         self.packet_queue.extend(packet)
 
@@ -202,7 +202,7 @@ class mav_packet_source(gr.sync_block):
         if self.sitl is not None:
             hb_fields = self.sitl.get_heartbeat()
             if hb_fields is not None:
-                print(f"[TX] given hb message is: {hb_fields}")
+                print(f"[mavGNUTX] given hb message is: {hb_fields}")
                 # Reconstruct MAVLink hearbeat message
                 hb_msg = self._mav.heartbeat_encode(
                     type= hb_fields['type'],
@@ -212,8 +212,17 @@ class mav_packet_source(gr.sync_block):
                     system_status=   hb_fields['system_status'],
                     mavlink_version= hb_fields['mavlink_version'],
                 )
-                print("[TX] Sending Hearbeat")
+                print("[mavGNUTX] Sending Hearbeat")
                 self.send_message(hb_msg.pack(self._mav))
+                
+
+            # Send over Raw Telemetry
+            print(f"[mavGNUTX] Sending over Telemetry")
+            raw_telem = self.sitl.get_latest_telemetry(raw=True)
+            if raw_telem is not None:
+                self.send_message(raw_telem.pack(self._mav))
+
+
 
         if len(self.packet_queue) == 0:
             # output zeros (idle when no data)
