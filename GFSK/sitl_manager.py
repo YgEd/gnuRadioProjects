@@ -77,7 +77,6 @@ def _sitl_process(
     sitl_address: str,
     forward_queue: mp.Queue,
     telemetry_queue: mp.Queue,
-    forward_queue,
     stop_event: mp.Event,
     log_dir: str,
 ):
