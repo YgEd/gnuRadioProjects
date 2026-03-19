@@ -209,7 +209,7 @@ class mav_packet_source(gr.sync_block):
         if msg.get_type() == 'HEARTBEAT':
             print(f"[mavGNUTX] Sending {msg.get_type()} Message")
             self.send_message(msg.pack(self._mav))
-            return
+        
 
         # if msg is GPS only send if 2 seconds have elapsed since the last time you send GPS
         if msg.get_type() == 'GLOBAL_POSITION_INT':
@@ -217,13 +217,14 @@ class mav_packet_source(gr.sync_block):
                 print(f"[mavGNUTX] Sending {msg.get_type()} Message")
                 self.send_message(msg.pack(self._mav))
                 self._time_since_gps = int(time.time())
-                return
+               
         
         # only send any other telem message if its been 5 seconds since last telem
-        if self._time_since_telem + 5 < curr_time:
-            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-            self.send_message(msg.pack(self._mav))
-            self._time_since_telem = int(time.time())
+        if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
+            if self._time_since_telem + 5 < curr_time:
+                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_telem = int(time.time())
         
         
 
