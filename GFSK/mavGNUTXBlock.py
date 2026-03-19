@@ -204,30 +204,13 @@ class mav_packet_source(gr.sync_block):
         n_requested = len(out)
 
         if self.sitl is not None:
-            hb_fields = self.sitl.get_heartbeat()
-            if hb_fields is not None:
-                print(f"[mavGNUTX] given hb message is: {hb_fields}")
-                # Reconstruct MAVLink hearbeat message
-                hb_msg = self._mav.heartbeat_encode(
-                    type= hb_fields['type'],
-                    autopilot=       hb_fields['autopilot'],
-                    base_mode=       hb_fields['base_mode'],
-                    custom_mode=     hb_fields['custom_mode'],
-                    system_status=   hb_fields['system_status'],
-                    mavlink_version= hb_fields['mavlink_version'],
-                )
-                print("[mavGNUTX] Sending Hearbeat")
-                self.send_message(hb_msg.pack(self._mav))
+            msg = self.sitl.get_mavlink_msg()
+            if msg is not None:
+                print(f"[mavGNUTX] given mavlink message is: {msg.get_type()}")
                 
-
-            telem = self.sitl.get_latest_telemetry()
-            if telem: #if dictionary is not empty
-                raw_telem = telem['raw']
-                print(raw_telem)
-                self.send_message(raw_telem['raw'].pack(self._mav))
-            # Send over Raw Telemetry
-                print(f"[mavGNUTX] Sending over Telemetry")
-                pass
+                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+                self.send_message(msg.pack(self._mav))
+                
 
 
 

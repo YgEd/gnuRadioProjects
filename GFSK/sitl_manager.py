@@ -77,7 +77,7 @@ def _sitl_process(
     sitl_address: str,
     forward_queue: mp.Queue,
     telemetry_queue: mp.Queue,
-    hb_queue,
+    forward_queue,
     stop_event: mp.Event,
     log_dir: str,
 ):
@@ -185,12 +185,22 @@ def _sitl_process(
             time.sleep(0.005)
             continue
 
-        # capture raw telemetry so we can easily pass to RX then to GCS
-        last_telem['raw'] = msg
-        # create a string version to log
-        
+        # In _sitl_process, replace the per-type forward_queue logic with a single
+        # general forward queue — pack the raw bytes right here
+        FORWARD_TYPES = {
+            'HEARTBEAT', 'GLOBAL_POSITION_INT', 'ATTITUDE',
+            'SYS_STATUS', 'GPS_RAW_INT', 'VFR_HUD', 'STATUSTEXT'
+        }
 
         t = msg.get_type()
+        if t in FORWARD_TYPES:
+            try:
+                packed = msg.pack(conn.mav)  # serialize to raw MAVLink bytes
+                forward_queue.put_nowait(packed)  # rename this queue to forward_queue for clarity
+            except Exception as e:
+                print(f"[SITL] Pack/queue error: {e}")
+        
+
         ts = datetime.datetime.now().isoformat()
         statustext = ''
 
@@ -203,7 +213,7 @@ def _sitl_process(
             print(f"[SITL] Heart beat message: {msg}")
             
             try:
-                hb_queue.put_nowait({
+                forward_queue.put_nowait({
                     'type': msg.type,
                     'autopilot': msg.autopilot,
                     'base_mode': msg.base_mode,
@@ -277,7 +287,6 @@ def _sitl_process(
                     last_telem['yaw'],
                     statustext,
                     last_telem['link_quality'],
-                    last_telem['raw'],
                 ])
 
         # Push latest snapshot to main process at low rate
@@ -332,7 +341,7 @@ class SITLManager:
         self._forward_queue  = mp.Queue(maxsize=200)
         self._telemetry_queue = mp.Queue(maxsize=500)
         self._stop_event     = mp.Event()
-        self._hb_queue = mp.Queue(maxsize=50)
+        self._forward_queue = mp.Queue(maxsize=50)
         self._threads = []
 
         # SITL subprocess handle (sim_vehicle.py)
@@ -364,7 +373,7 @@ class SITLManager:
                 self.sitl_address,
                 self._forward_queue,
                 self._telemetry_queue,
-                self._hb_queue,
+                self._forward_queue,
                 self._stop_event,
                 self.log_dir,
             ),
@@ -423,9 +432,9 @@ class SITLManager:
 
     # ── Public API ─────────────────────────────────────────────────────────
 
-    def get_heartbeat(self):
+    def get_mavlink_msg(self):
         try:
-            return self._hb_queue.get_nowait()
+            return self._forward_queue.get_nowait()
         except Exception as e:
             # if e == queue.Empty:
             #     print(f"[SITL Mananger] No heartbeat present in queue")
@@ -447,7 +456,7 @@ class SITLManager:
     def get_latest_telemetry(self) -> dict:
         """Returns a snapshot of the most recent telemetry from SITL."""
         with self._telem_lock:
-            return self._latest_telem
+            return dict(self._latest_telem)
 
     def is_armed(self) -> bool:
         return self.get_latest_telemetry().get('armed', False)
