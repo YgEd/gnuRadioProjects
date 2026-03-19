@@ -208,8 +208,7 @@ def _sitl_process(
             last_telem['armed'] = armed
             last_telem['mode'] = msg.custom_mode
             print(f"[SITL] HB — armed={armed} mode={msg.custom_mode} "
-                  f"state={msg.system_status}\nPassing to mavGNUTXBlock to send")
-            print(f"[SITL] Heart beat message: {msg}")
+                  f"state={msg.system_status}\n")
             
 
         elif t == 'STATUSTEXT':
