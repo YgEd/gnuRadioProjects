@@ -185,7 +185,7 @@ def _sitl_process(
             continue
 
         # capture raw telemetry so we can easily pass to RX then to GCS
-        last_telem['raw'] = msg
+        last_telem['raw'] = msg.to_dict()
 
         t = msg.get_type()
         ts = datetime.datetime.now().isoformat()

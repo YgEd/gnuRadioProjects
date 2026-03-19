@@ -178,6 +178,10 @@ class mav_packet_source(gr.sync_block):
         payload_bytes_list = list(np.packbits(np.unpackbits(whitened_msg)))
         payload_crc_val = crc16(payload_bytes_list)
 
+        try:
+            msg = self._mav .parse_char(payload_bytes) 
+        except Exception as e:
+            print(f"[GNURXBlock] Error when converting payload bytes to mavlink string: {e}")
 
         packet_info = {
             'raw_payload_bytes':bytearray(message),
@@ -186,7 +190,7 @@ class mav_packet_source(gr.sync_block):
             'payload_len_crc':bytearray([len_crc_byte]),
             'payload_crc':bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
             'packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
-            'message':'Success'
+            'message':msg
         }
 
         if self.metrics_logger is not None:
