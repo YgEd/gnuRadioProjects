@@ -66,6 +66,7 @@ import signal
 from pymavlink import mavutil
 from pymavlink.dialects.v20 import common as mavlink2
 import termios
+import copy
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +188,7 @@ def _sitl_process(
         # capture raw telemetry so we can easily pass to RX then to GCS
         last_telem['raw'] = msg
         # create a string version to log
-        raw_string_msg = msg
+        raw_string_msg = copy.copy(msg)
         raw_string_msg = raw_string_msg.to_dict()
 
         t = msg.get_type()
