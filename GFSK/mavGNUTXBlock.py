@@ -223,7 +223,7 @@ class mav_packet_source(gr.sync_block):
             raw_telem = self.sitl.get_latest_telemetry()
             if raw_telem: #if dictionary is not empty
                 print(raw_telem)
-                # self.send_message(raw_telem.pack(self._mav))
+                self.send_message(raw_telem.pack(self._mav))
             # Send over Raw Telemetry
                 print(f"[mavGNUTX] Sending over Telemetry")
                 pass
