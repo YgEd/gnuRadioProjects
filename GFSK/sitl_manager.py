@@ -207,8 +207,6 @@ def _sitl_process(
             armed = bool(msg.base_mode & mavlink2.MAV_MODE_FLAG_SAFETY_ARMED)
             last_telem['armed'] = armed
             last_telem['mode'] = msg.custom_mode
-            print(f"[SITL] HB — armed={armed} mode={msg.custom_mode} "
-                  f"state={msg.system_status}\n")
             
 
         elif t == 'STATUSTEXT':
@@ -218,7 +216,6 @@ def _sitl_process(
                 4: 'WARNING', 5: 'NOTICE', 6: 'INFO', 7: 'DEBUG'
             }
             sev = severity_map.get(msg.severity, str(msg.severity))
-            print(f"[SITL] STATUS [{sev}]: {msg.text}")
 
             # Push link-related events to telemetry queue immediately
             text_lower = msg.text.lower()

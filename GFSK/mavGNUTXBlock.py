@@ -209,7 +209,11 @@ class mav_packet_source(gr.sync_block):
         if msg.get_type() == 'HEARTBEAT':
             print(f"[mavGNUTX] Sending {msg.get_type()} Message")
             self.send_message(msg.pack(self._mav))
-        
+
+        # if msg is status send right away
+        if msg.get_type() == 'STATUSTEXT':
+            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            self.send_message(msg.pack(self._mav))
 
         # if msg is GPS only send if 2 seconds have elapsed since the last time you send GPS
         if msg.get_type() == 'GLOBAL_POSITION_INT':
