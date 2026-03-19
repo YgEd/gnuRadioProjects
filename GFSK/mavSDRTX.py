@@ -1,7 +1,8 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
-from mavGNUBlock import mav_packet_reader, mav_packet_source
+from mavGNUTXBlock import mav_packet_source
+from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
@@ -12,6 +13,10 @@ import time
 
 class flow_graph(gr.top_block,Qt.QWidget):
     def __init__(self):
+
+        ####################################
+        # QT Widget Setup
+        ####################################
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
         self.setWindowTitle("Ouput TX bassaband")
@@ -40,6 +45,8 @@ class flow_graph(gr.top_block,Qt.QWidget):
                 self.restoreGeometry(geometry)
         except BaseException as exc:
             print(f"Qt GUI: Could not restore geometry: {str(exc)}", file=sys.stderr)
+
+        
 
         ####################################
         # Variables
@@ -91,13 +98,23 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
 
+        # TX interpolation and decimation amounts for rational resampler ratio
         self.tx_interpolation=20
         self.tx_decimation=1
         
+        # RX interpolation and decimation amounts for rational resampler ratio
         self.rx_interpolation=1
         self.rx_decimation=20
+        # Fractional bw for TX rational resampler
         self.fractional_bw=0.4
+        # TX gain scalar constant
         self.tx_gain_scalar=1
+
+        ##########################
+        # BladeRF source variables
+        ##########################
+
+        self.sdr_RF_gain = 35       
 
     
 
@@ -105,7 +122,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # Blocks
         #######################
 
-        self.source = mav_packet_source()
+        
                         
         # upsample from 100e3 to 2e6 or (2Mhz sampling rate limit for bladerf is 61.44Mhz)
         self.tx_resampler = filter.rational_resampler_ccf(
@@ -137,7 +154,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.osmosdr_sink.set_center_freq(self.center_freq, 0)
         self.osmosdr_sink.set_antenna('TX1', 0) # set antenna earlier so that the gain settings apply to that antenna
         self.osmosdr_sink.set_freq_corr(0, 0)
-        self.osmosdr_sink.set_gain(35, 0)        # TX gain - start low
+        self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)        # TX gain - start low
         self.osmosdr_sink.set_if_gain(15, 0)
         self.osmosdr_sink.set_bb_gain(15, 0)
         self.osmosdr_sink.set_bandwidth(0, 0)
@@ -185,8 +202,20 @@ class flow_graph(gr.top_block,Qt.QWidget):
             log=False
         )
 
-        self.debug_sink = mav_packet_reader()  # your existing RX packet block
 
+
+        # Metrics blocks
+        self.metrics_logger = MetricsLogger()
+        self.metrics_probe = RFMetricsProbe(
+            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samples_per_symbol=self.samples_per_symbol,
+            center_freq=self.center_freq,
+            logger=self.metrics_logger,
+            sensitivity=self.sensitivity
+        )
+
+        # packet source
+        self.source = mav_packet_source(metrics_logger=self.metrics_logger)
 
 
         
@@ -200,58 +229,77 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.connect(self.tx_gain, self.qt_time_sink)
         self.connect(self.tx_gain, self.tx_resampler)
         self.connect(self.tx_resampler, self.osmosdr_sink)
+        self.connect(self.tx_resampler, self.metrics_probe)
 
         # Connect loopback — tap off after GFSK mod
         # Just for debug perposes
         # self.connect(self.gfsk_mod, self.gfsk_demod)
         # self.connect(self.gfsk_demod, self.debug_sink)
 
-def cli_thread(packet_source):
-    mav = mavlink2.MAVLink(None)
-    mav.srcSystem = 255
-    mav.srcComponent = 1
+    # def cli_thread(packet_source):
+    #     mav = mavlink2.MAVLink(None)
+    #     mav.srcSystem = 255
+    #     mav.srcComponent = 1
+        
+    #     transmitting = True
+        
+    #     def input_listener():
+    #         nonlocal transmitting
+    #         while True:
+    #             try:
+    #                 cmd = input("Enter command (start/stop/arm/guided/quit): ")
+    #             except (KeyboardInterrupt, EOFError):
+    #                 print("\nProgram Killed")
+    #                 Qt.QApplication.quit()
+    #                 return
+                
+    #             if cmd == 'stop':
+    #                 transmitting = False
+    #                 print("[CLI] Transmission stopped")
+    #             elif cmd == 'start':
+    #                 transmitting = True
+    #                 print("[CLI] Transmission started")
+    #             elif cmd == 'arm':
+    #                 msg = mav.command_long_encode(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)
+    #                 packet_source.send_message(msg.pack(mav), True)
+    #                 print("[CLI] Arm command sent")
+    #             elif cmd == 'guided':
+    #                 msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
+    #                 packet_source.send_message(msg.pack(mav), True)
+    #                 print("[CLI] Guided command sent")
+    #             elif cmd == 'quit':
+    #                 transmitting = False
+    #                 Qt.QApplication.quit()
+    #                 return
+
+    #     listener = threading.Thread(target=input_listener, daemon=True)
+    #     listener.start()
+
+        ####################################
+        # Clean Up Methods
+        ####################################
+
+    def closeEvent(self, event):
+        """Handle window close button — same cleanup as SIGINT."""
+        self._safe_shutdown()
+        event.accept()
+
+    def _safe_shutdown(self):
+        """Zero RF gains and stop the flow graph cleanly."""
+        print("Shutting down BladeRF TX...")
+        try:
+            # Kill RF output before stopping the scheduler
+            self.osmosdr_sink.set_gain(0, 0)
+            self.osmosdr_sink.set_if_gain(0, 0)
+            self.osmosdr_sink.set_bb_gain(0, 0)
+        except Exception as e:
+            print(f"Warning: could not zero gains: {e}", file=sys.stderr)
+
+        self.stop()
+        self.wait()
+        print("Flow graph stopped.")
     
-    transmitting = True
     
-    def input_listener():
-        nonlocal transmitting
-        while True:
-            try:
-                cmd = input("Enter command (start/stop/arm/guided/quit): ")
-            except (KeyboardInterrupt, EOFError):
-                print("\nProgram Killed")
-                Qt.QApplication.quit()
-                return
-            
-            if cmd == 'stop':
-                transmitting = False
-                print("[CLI] Transmission stopped")
-            elif cmd == 'start':
-                transmitting = True
-                print("[CLI] Transmission started")
-            elif cmd == 'arm':
-                msg = mav.command_long_encode(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)
-                packet_source.send_message(msg.pack(mav), True)
-                print("[CLI] Arm command sent")
-            elif cmd == 'guided':
-                msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
-                packet_source.send_message(msg.pack(mav), True)
-                print("[CLI] Guided command sent")
-            elif cmd == 'quit':
-                transmitting = False
-                Qt.QApplication.quit()
-                return
-
-    listener = threading.Thread(target=input_listener, daemon=True)
-    listener.start()
-
-    while True:
-        if transmitting:
-            msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
-            packet_source.send_message(msg.pack(mav), True)
-            print("[TX] Packet sent")
-        time.sleep(5)
-
 if __name__ == '__main__':
     app = Qt.QApplication(sys.argv)
     tb = flow_graph()
@@ -260,34 +308,21 @@ if __name__ == '__main__':
 
     def sig_handler(sig=None, frame=None):
         print("\nCaught SIGINT, shutting down...")
-        tb.stop()
-        tb.wait()
+        tb._safe_shutdown()
         Qt.QApplication.quit()
-
-    def noop():
-        pass
 
     signal.signal(signal.SIGINT, sig_handler)
 
     timer = Qt.QTimer()
     timer.start(500)
-    timer.timeout.connect(noop)
+    timer.timeout.connect(lambda: None)
 
     tb.start()
-    
-    # CLI needs to be in a separate thread now since app.exec_() blocks
-    cli = threading.Thread(target=cli_thread, args=(tb.source,), daemon=True)
-    cli.start()
-    
 
     try:
-        app.exec_()
+        sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
-    finally:
-        tb.stop()
-        tb.wait()
-
         
 
 

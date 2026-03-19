@@ -1,7 +1,5 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
-
-from mavGNUBlock import mav_packet_reader, mav_packet_source
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
@@ -10,6 +8,8 @@ import sip
 import signal
 from PyQt5 import Qt
 import numpy as np
+from mavGNURXBlock import mav_packet_reader_with_metrics
+from rf_metrics import RFMetricsProbe, MetricsLogger
 
 
 class flow_graph(gr.top_block, Qt.QWidget):
@@ -93,13 +93,14 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
 
-        self.tx_interpolation=20
-        self.tx_decimation=1
-        
+        # RX interpolation and decimation ratio for rational resampler
         self.rx_interpolation=1
         self.rx_decimation=20
         self.fractional_bw=0.4
         self.tx_gain_scalar=1
+
+        # SDR RF gain
+        self.sdr_RF_gain = 30
 
     
 
@@ -107,7 +108,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Blocks
         #######################
 
-        self.destination = mav_packet_reader()
+
        
 
         # resampler and lowpass all in one
@@ -122,7 +123,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
                 # Then to get cutoff freq we calculate
                 # cutoff_freq = occupied_bandwidth * 0.75 to 1 (this 0.75 to 1 scalar is a trade off between (next two lines))
                 # 0.75 -> tighter, less noise, but sensitive to freq offset
-                # 1 -> more open, tolerant ot some offset
+                # 1 -> more open, tolerant to some offset
                 # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
                 # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
                 cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
@@ -142,7 +143,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         #     gain=1.0         # initial gain estimate
         # )
 
-        # AGC2 is better as it has tow different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
+        # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
             attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
             decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)
@@ -174,8 +175,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
         self.osmosdr_source.set_gain_mode(False, 0)
-        self.osmosdr_source.set_gain(30, 0)
-        self.osmosdr_source.set_if_gain(30, 0)
+        self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
+        self.osmosdr_source.set_if_gain(10, 0)
         self.osmosdr_source.set_bb_gain(16, 0)
         self.osmosdr_source.set_bandwidth(0,0)
 
@@ -210,13 +211,18 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        # self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
-        # self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
-
-        # self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        # self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
-
+        self.metrics_logger = MetricsLogger()
+        self.metrics_probe = RFMetricsProbe(
+            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samples_per_symbol=self.samples_per_symbol,
+            center_freq=self.center_freq,
+            logger=self.metrics_logger,
+            sensitivity=self.sensitivity
+        )
        
+        # self.destination = mav_packet_reader()
+        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger)
+
         ##########################
         # Connections
         #########################
@@ -229,10 +235,30 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
         self.connect(self.agc, self.gfsk_demod)
+        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         # self.connect(self.gfsk_demod, self.destination)
 
         self.connect(self.gfsk_demod, self.destination)
 
+    def closeEvent(self, event):
+        """Handle window close button — same cleanup as SIGINT."""
+        self._safe_shutdown()
+        event.accept()
+
+    def _safe_shutdown(self):
+        """Zero RF gains and stop the flow graph cleanly."""
+        print("Shutting down BladeRF TX...")
+        try:
+            # Kill RF output before stopping the scheduler
+            self.osmosdr_source.set_gain(0, 0)
+            self.osmosdr_source.set_if_gain(0, 0)
+            self.osmosdr_source.set_bb_gain(0, 0)
+        except Exception as e:
+            print(f"Warning: could not zero gains: {e}", file=sys.stderr)
+
+        self.stop()
+        self.wait()
+        print("Flow graph stopped.")
 
 
 
@@ -245,9 +271,9 @@ if __name__ == '__main__':
 
     def sig_handler(sig=None, frame=None):
         print("\nCaught SIGINT, shutting down...")
-        tb.stop()
-        tb.wait()
+        tb._safe_shutdown()
         Qt.QApplication.quit()
+
 
     def noop():
         pass
@@ -261,12 +287,9 @@ if __name__ == '__main__':
     tb.start()
 
     try:
-        app.exec_()
+        sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
-    finally:
-        tb.stop()
-        tb.wait()
         
 
 

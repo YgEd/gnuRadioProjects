@@ -27,10 +27,12 @@ defer==1.0.6
 distro==1.9.0
 distro-info==1.7+build1
 duplicity==2.1.4
+empy==3.3.4
 fastcrc==0.3.5
 fasteners==0.18
 fonttools==4.46.0
 fs==2.4.16
+future==1.0.0
 html5lib==1.1
 httplib2==0.20.4
 idna==3.6

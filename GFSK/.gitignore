@@ -1,0 +1,11 @@
+*.dat
+*.csv
+*.tlog
+*.raw
+*.grc
+*.DAT 
+*.bin
+*.param
+*.parm
+*.pyc
+./__pycache__/*
