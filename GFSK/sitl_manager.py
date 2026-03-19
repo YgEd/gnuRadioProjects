@@ -274,7 +274,7 @@ def _sitl_process(
                     last_telem['yaw'],
                     statustext,
                     last_telem['link_quality'],
-                    last_telem['raw']
+                    last_telem['raw'],
                 ])
 
         # Push latest snapshot to main process at low rate
@@ -402,9 +402,9 @@ class SITLManager:
             finally:
                 self._sitl_proc = None
         
-        # stop SITL STDOUT reader thread
+        # stop SITL STDOUT reader and telemetry drain thread
         for t in self._threads:
-            t.join(timeout=5)
+            t.join(timeout=10)
         self._threads.clear()
 
         print("[SITLManager] Stopping...")
@@ -441,11 +441,9 @@ class SITLManager:
         except Exception:
             print("[SITLManager] Forward queue full — packet dropped")
 
-    def get_latest_telemetry(self, raw=False) -> dict:
+    def get_latest_telemetry(self) -> dict:
         """Returns a snapshot of the most recent telemetry from SITL."""
         with self._telem_lock:
-            if raw:
-                return dict(self._latest_telem['raw'])
             return dict(self._latest_telem)
 
     def is_armed(self) -> bool:
@@ -486,7 +484,7 @@ class SITLManager:
             '--param=SYSID_MYGCS=255',
             '--param=FS_GCS_ENABLE=1',
             '--param=FS_GCS_TIMEOUT=5',
-            '--mavproxy-args=--cmd="set heartbeat 0; set srcSystem 255"',
+            '--mavproxy-args=--daemon',
         ] + self.sitl_extra_args
 
         print(f"[SITLManager] Launching: {' '.join(cmd)}")

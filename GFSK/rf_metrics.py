@@ -245,9 +245,10 @@ def bin_jitter(jitter_ns):
     return 'high'
 
 def bin_ber(ber):
-    if ber < 1e-4:   return 'excellent'
-    if ber <= 1e-2:  return 'acceptable'
-    return 'poor'
+    if ber != 'N/A': #in the case the BER is not applicable (bad length or payload CRC)
+        if ber < 1e-4:   return 'excellent'
+        if ber <= 1e-2:  return 'acceptable'
+        return 'poor'
 
 
 # ---------------------------------------------------------------------------
