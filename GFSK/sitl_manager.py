@@ -377,21 +377,18 @@ class SITLManager:
             name='sitl-telem-drain'
         )
         self._drain_thread.start()
+        self._threads.append(self._drain_thread)
 
     def stop(self):
         """Gracefully shut down worker process and optionally kill SITL."""
         self._stop_event.set()
-        # stop any threads
-        for t in self._threads:
-            t.join(timeout=5)
-        self._threads.clear
 
         if self._sitl_proc is not None:
             print("[SITLManager] Terminating sim_vehicle.py ...")
             try:
-                # kill entire process group (catches any child process SITL spawned)
+                # kill process
                 os.killpg(os.getpgid(self._sitl_proc.pid), signal.SIGTERM)
-                self._sitl_proc.wait(timeout=5)
+                self._sitl_proc.wait(timeout=10)
             except ProcessLookupError:
                 pass #process is already dead
             except subprocess.TimeoutExpired:
@@ -400,6 +397,11 @@ class SITLManager:
                 self._sitl_proc.wait()
             finally:
                 self._sitl_proc = None
+        
+        # stop SITL STDOUT reader thread
+        for t in self._threads:
+            t.join(timeout=5)
+        self._threads.clear()
 
         print("[SITLManager] Stopping...")
 
@@ -458,6 +460,15 @@ class SITLManager:
             print("[SITLManager] Terminal reset failed")
             pass
 
+    def _log_sitl_output(self, proc):
+        try:
+            for line in iter(proc.stdout.readline, b''):
+                print(f"[SITL-SIM] {line.decode(errors='replace').rstrip()}")
+        except ValueError:
+            pass
+        except Exception as e:
+            print(f"[SITL-SIM] Log thread exiting: {e}")
+
     def _launch_sitl(self):
         cmd = [
             'python3',
@@ -477,7 +488,7 @@ class SITLManager:
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            preexec_fn=os.setsid,
+            start_new_session=True,
         )
 
         def _log_sitl_output(proc):

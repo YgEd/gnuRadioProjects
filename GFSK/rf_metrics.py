@@ -94,26 +94,19 @@ class MetricsLogger:
         self._write_header()
 
     def _write_header(self):
+        headers = [
+            # Original measurement fields
+            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            # Discretized / derived fields
+            'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
+            # Detailed packet info fields
+            'MAVLink_message', 'payload_len', 'payload_len_crc', 'payload_crc',
+            'raw_payload_bytes', 'whitened_payload_bytes', 'full_packet_bytes'
+        ]
+
         with open(self.filepath, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([
-                'timestamp',
-                'snr_db',
-                'noise_floor_dbm',
-                'freq_offset_hz',
-                'doppler_hz',
-                'jitter_ns',
-                'ber',
-                'packet_success',
-                # Discretized columns for BN — populated by log_packet_outcome
-                'SNR',
-                'ChannelNoise',
-                'FreqOffset',
-                'Doppler',
-                'Jitter',
-                'BER',
-                'PacketSuccess',
-            ])
+            writer.writerow(headers)
 
     def update_iq_metrics(self, snr_db, noise_floor_dbm,
                           freq_offset_hz, doppler_hz, jitter_ns):
@@ -136,41 +129,86 @@ class MetricsLogger:
             self._baseline_freq_hz = freq_hz
         print(f"[MetricsLogger] Baseline freq set: {freq_hz:.2f} Hz offset from center")
 
-    def log_packet_outcome(self, success: bool, ber: float):
+    def log_packet_outcome(self, packet_info, success: bool, ber: float | str):
         """
         Called by mav_packet_reader after each packet attempt.
-        Merges with latest IQ metrics and writes one CSV row.
+        Merges with latest IQ and packet metrics and writes one CSV row.
         """
+        # Pares packet_info values
+        def fmt(data):
+            if data is None:
+                return "N/A"
+            elif isinstance(data, (bytes, bytearray)):
+                return data.hex(' ')
+            elif isinstance(data, (list, np.ndarray)):
+                return ''.join(str(b) for b in data)
+            return str(data)
+
         with self._lock:
             m = dict(self._iq_metrics)  # snapshot
 
-        row = {
-            'timestamp':       datetime.datetime.now().isoformat(),
-            'snr_db':          m['snr_db'],
-            'noise_floor_dbm': m['noise_floor_dbm'],
-            'freq_offset_hz':  m['freq_offset_hz'],
-            'doppler_hz':      m['doppler_hz'],
-            'jitter_ns':       m['jitter_ns'],
-            'ber':             ber,
-            'packet_success':  'success' if success else 'failure',
-        }
+        headers = [
+            # Original measurement fields
+            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            # Discretized / derived fields
+            'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
+            # Detailed packet info fields
+            'MAVLink_message', 'payload_len', 'payload_len_crc', 'payload_crc',
+            'raw_payload_bytes', 'whitened_payload_bytes', 'full_packet_bytes'
+        ]
 
-        # Discretize for BN if values are available
+            # Step 2: initialize row with None for all headers
+        row = {key: None for key in headers}
+
+        # Step 3: populate the base fields
+        row.update({
+            'timestamp': datetime.datetime.now().isoformat(),
+            'snr_db': m.get('snr_db'),
+            'noise_floor_dbm': m.get('noise_floor_dbm'),
+            'freq_offset_hz': m.get('freq_offset_hz'),
+            'doppler_hz': m.get('doppler_hz'),
+            'jitter_ns': m.get('jitter_ns'),
+            'ber': ber,
+        })
+
+        # Step 4: populate discretized fields if measurements available
         if all(v is not None for v in m.values()):
-            row['SNR']           = bin_snr(m['snr_db'])
-            row['ChannelNoise']  = bin_channel_noise(m['noise_floor_dbm'])
-            row['FreqOffset']    = bin_freq_offset(m['freq_offset_hz'])
-            row['Doppler']       = bin_doppler(m['doppler_hz'])
-            row['Jitter']        = bin_jitter(m['jitter_ns'])
-            row['BER']           = bin_ber(ber)
-            row['PacketSuccess'] = 'success' if success else 'failure'
+            row.update({
+                'SNR': bin_snr(m['snr_db']),
+                'ChannelNoise': bin_channel_noise(m['noise_floor_dbm']),
+                'FreqOffset': bin_freq_offset(m['freq_offset_hz']),
+                'Doppler': bin_doppler(m['doppler_hz']),
+                'Jitter': bin_jitter(m['jitter_ns']),
+                'BER': bin_ber(ber),
+                'PacketSuccess': 'success' if success else 'failure'
+            })
         else:
-            row['SNR'] = row['ChannelNoise'] = row['FreqOffset'] = \
-            row['Doppler'] = row['Jitter'] = row['BER'] = \
-            row['PacketSuccess'] = 'unknown'
+            row.update({
+                'SNR': 'unknown',
+                'ChannelNoise': 'unknown',
+                'FreqOffset': 'unknown',
+                'Doppler': 'unknown',
+                'Jitter': 'unknown',
+                'BER': 'unknown',
+                'PacketSuccess': 'unknown'
+            })
 
+        # Step 5: populate detailed packet info fields
+        row.update({
+            'MAVLink_message': fmt(packet_info['message']),
+            'payload_len': fmt(packet_info['payload_len']),
+            'payload_len_crc': fmt(packet_info['payload_len_crc']),
+            'payload_crc': fmt(packet_info['payload_crc']),
+            'raw_payload_bytes': fmt(packet_info['raw_payload_bytes']),
+            'whitened_payload_bytes': fmt(packet_info['whitened_payload_bytes']),
+            'full_packet_bytes': fmt(packet_info['packet_bytes'])
+        })
+
+        # Step 6: write row to CSV safely
         with open(self.filepath, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+            writer = csv.DictWriter(f, fieldnames=headers)
+            if f.tell() == 0:
+                writer.writeheader()
             writer.writerow(row)
 
 

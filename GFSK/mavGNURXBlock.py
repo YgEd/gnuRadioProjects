@@ -111,8 +111,10 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         ber = 1.0 - (1.0 - per) ** (1.0 / self.PACKET_LENGTH_BITS)
         return ber
 
+
+
     def work(self, input_items, output_items):
-        from mavGNUTXBlock import log_name, whiten, crc8, crc16, log_packet
+        from mavGNUTXBlock import log_name, whiten, crc8, crc16
 
         in_data = input_items[0]
 
@@ -140,20 +142,32 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     self.length_bytes = length_bytes = self.bits_to_bytes(voted_bits)
                     received_crc  = self.bits_to_bytes(self.bit_buffer[48:56])[0]
                     expected_crc  = crc8(list(length_bytes))
+                    self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
 
                     if received_crc != expected_crc:
                         print(f"Length CRC FAILED: got {received_crc:#x}, expected {expected_crc:#x}")
                         # Log packet failure
                         ber = self._estimate_ber(success=False)
+                        
+                        
+                        
                         if self.metrics_logger:
-                            self.metrics_logger.log_packet_outcome(success=False, ber=ber)
+                            packet_info =  {
+                                'payload_len':bytearray(self.payload_len),
+                                'payload_len_crc':bytearray([received_crc]),
+                                'payload_crc':bytearray(),
+                                'raw_payload_bytes':bytearray(),
+                                'whitened_payload_bytes':bytearray(),
+                                'packet_bytes':bytearray(),
+                                'message':f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
+                            }
+                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
                         self.state          = 'SEARCHING'
                     else:
                         self.constructed_bits.extend(self.bit_buffer[:56])
-                        self.payload_len = (length_bytes[0] << 8 | length_bytes[1])
                         print(f"Payload length: {self.payload_len} bytes (CRC OK)")
                         self.bit_buffer = []
                         self.state = 'READ_PAYLOAD'
@@ -179,8 +193,19 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     if received_crc_val != expected_crc_val:
                         print(f"Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
                         ber = self._estimate_ber(success=False)
+
+                        
                         if self.metrics_logger:
-                            self.metrics_logger.log_packet_outcome(success=False, ber=ber)
+                            packet_info = {
+                                'raw_payload_bytes':bytearray(payload_bytes),
+                                'whitened_payload_bytes':unwhitened_bytes,
+                                'payload_len':self.payload_len,
+                                'payload_len_crc':bytearray([crc8(self.length_bytes)]),
+                                'payload_crc':bytearray(received_crc_bytes),
+                                'packet_bytes':packet_bytes,
+                                'message':f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
+                            }
+                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
@@ -189,8 +214,25 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
                     # SUCCESS
                     ber = self._estimate_ber(success=True)
+                    # turn mavlink message to string to log
+                    msg = None
+                    try:
+                        mav = mavutil.mavlink.MAVLink(None)
+                        msg = mav.parse_char(payload_bytes) 
+                    except Exception as e:
+                        print(f"[rf_metrics] Error when converting payload bytes to mavlink string: {e}")
+                        
                     if self.metrics_logger:
-                        self.metrics_logger.log_packet_outcome(success=True, ber=ber)
+                        packet_info = {
+                                'raw_payload_bytes':bytearray(payload_bytes),
+                               'whitened_payload_bytes':unwhitened_bytes,
+                                'payload_len':self.payload_len,
+                                'payload_len_crc':bytearray([crc8(self.length_bytes)]),
+                                'payload_crc':bytearray(received_crc_bytes),
+                                'packet_bytes':packet_bytes,
+                                'message':msg
+                            }
+                        self.metrics_logger.log_packet_outcome(packet_info, success=True, ber=ber)
                     # try:
                     #     self.sitl.forward_packet(payload_bytes)
                     # except Exception as e:

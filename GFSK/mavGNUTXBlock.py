@@ -12,48 +12,6 @@ from pymavlink.dialects.v20 import common as mavlink2
 now = datetime.datetime.now().isoformat()
 log_name = f"packet-log-{now}.csv"
 
-def log_packet(filename, direction, **fields):
-
-    log_dir = "packet-logs"
-
-    # Create directory if it doesn't exist
-    os.makedirs(log_dir, exist_ok=True)
-
-    # Build full file path inside packet-logs
-    filepath = os.path.join(log_dir, filename)
-
-    file_exists = os.path.exists(filepath)
-
-    file_exists = os.path.exists(filepath)
-    
-    with open(filepath, 'a', newline='') as f:
-        writer = csv.writer(f)
-
-        if not file_exists:
-            writer.writerow([
-                'timestamp', 'direction', 'payload_len', 'payload_len_crc', 'payload_crc',
-                'raw_payload_bytes', 'whitened_payload_bytes', 'packet_bytes', 'message'
-            ])
-        
-        def fmt(data):
-            if isinstance(data, (bytes, bytearray)):
-                return data.hex(' ')
-            elif isinstance(data, (list, np.ndarray)):
-                return ''.join(str(b) for b in data)
-            return str(data)
-        
-        writer.writerow([
-            datetime.datetime.now().isoformat(),
-            direction,
-            fields.get('payload_len', ''),
-            fmt(fields.get('payload_len_crc','')),
-            fmt(fields.get('payload_crc','')),
-            fmt(fields.get('raw_payload_bytes', '')),
-            fmt(fields.get('whitened_payload_bytes', '')),
-            fmt(fields.get('packet_bytes', '')),
-            fmt(fields.get('message', ''))
-        ])
-
 
 
 
@@ -105,7 +63,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 class mav_packet_source(gr.sync_block):
-    def __init__(self):
+    def __init__(self, metrics_logger=None):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Source",
@@ -129,6 +87,9 @@ class mav_packet_source(gr.sync_block):
         self._mav.srcSystem = 255
         self._mav.srcComponent = 1
         self._pending_bits = []
+
+        # logger
+        self.metrics_logger = metrics_logger
 
 
         # attempt to connect to sitl
@@ -218,15 +179,19 @@ class mav_packet_source(gr.sync_block):
         payload_crc_val = crc16(payload_bytes_list)
 
 
-        log_packet(log_name, 'TX',
-            raw_payload_bytes=bytearray(message),
-            whitened_payload_bytes=whitened_msg,
-            payload_len=len(message),
-            payload_len_crc=bytearray([len_crc_byte]),
-            payload_crc=bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
-            packet_bytes=bytearray(np.packbits(packet_for_log).tolist()),
-            message='Success'
-        )
+        packet_info = {
+            'raw_payload_bytes':bytearray(message),
+            'whitened_payload_bytes':whitened_msg,
+            'payload_len':len(message),
+            'payload_len_crc':bytearray([len_crc_byte]),
+            'payload_crc':bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
+            'packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
+            'message':'Success'
+        }
+
+        if self.metrics_logger is not None:
+            self.metrics_logger(packet_info, success=True, ber='N/A')
+        
         self.packet_queue.extend(packet)
 
     

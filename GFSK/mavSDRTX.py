@@ -2,6 +2,7 @@ from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
 from mavGNUTXBlock import mav_packet_source
+from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
@@ -115,7 +116,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # Blocks
         #######################
 
-        self.source = mav_packet_source()
+        
                         
         # upsample from 100e3 to 2e6 or (2Mhz sampling rate limit for bladerf is 61.44Mhz)
         self.tx_resampler = filter.rational_resampler_ccf(
@@ -197,6 +198,19 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
 
 
+        # Metrics blocks
+        self.metrics_logger = MetricsLogger()
+        self.metrics_probe = RFMetricsProbe(
+            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samples_per_symbol=self.samples_per_symbol,
+            center_freq=self.center_freq,
+            logger=self.metrics_logger,
+            sensitivity=self.sensitivity
+        )
+
+        # packet source
+        self.source = mav_packet_source(metrics_logger=self.metrics_logger)
+
 
         
         ##########################
@@ -209,6 +223,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.connect(self.tx_gain, self.qt_time_sink)
         self.connect(self.tx_gain, self.tx_resampler)
         self.connect(self.tx_resampler, self.osmosdr_sink)
+        self.connect(self.tx_resampler, self.metrics_probe)
 
         # Connect loopback — tap off after GFSK mod
         # Just for debug perposes
