@@ -240,7 +240,7 @@ class mav_packet_source(gr.sync_block):
             if msg is not None:
                 
                 # only send messages at set frequencies based on their type
-                self.sendGuard(self, msg, int(time.time()))
+                self.sendGuard(msg, int(time.time()))
                 
 
 
