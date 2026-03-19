@@ -185,7 +185,7 @@ def _sitl_process(
             continue
 
         # capture raw telemetry so we can easily pass to RX then to GCS
-        last_telem['raw'] = msg.to_dict()
+        last_telem['raw'] = msg
 
         t = msg.get_type()
         ts = datetime.datetime.now().isoformat()
@@ -274,7 +274,7 @@ def _sitl_process(
                     last_telem['yaw'],
                     statustext,
                     last_telem['link_quality'],
-                    last_telem['raw'],
+                    last_telem['raw'].to_dict(),
                 ])
 
         # Push latest snapshot to main process at low rate
