@@ -230,13 +230,13 @@ def _sitl_process(
                     'timestamp': ts,
                 })
 
-        # elif t == 'GLOBAL_POSITION_INT':
-        #     last_telem['lat'] = msg.lat / 1e7
-        #     last_telem['lon'] = msg.lon / 1e7
-        #     last_telem['alt_m'] = msg.relative_alt / 1000.0
-        #     last_telem['vx'] = msg.vx / 100.0
-        #     last_telem['vy'] = msg.vy / 100.0
-        #     last_telem['vz'] = msg.vz / 100.0
+        elif t == 'GLOBAL_POSITION_INT':
+            last_telem['lat'] = msg.lat / 1e7
+            last_telem['lon'] = msg.lon / 1e7
+            last_telem['alt_m'] = msg.relative_alt / 1000.0
+            last_telem['vx'] = msg.vx / 100.0
+            last_telem['vy'] = msg.vy / 100.0
+            last_telem['vz'] = msg.vz / 100.0
 
         # elif t == 'ATTITUDE':
         #     import math
@@ -252,7 +252,7 @@ def _sitl_process(
         # loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT',
         #             'ATTITUDE', 'RC_CHANNELS'}
         
-        loggable = {'HEARTBEAT', 'STATUSTEXT'}
+        loggable = {'HEARTBEAT', 'STATUSTEXT', 'GLOBAL_POSITION_INT'}
         if t in loggable:
             with open(telem_path, 'a', newline='') as f:
                 writer = csv.writer(f)
