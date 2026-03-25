@@ -11,9 +11,9 @@
 ![IMG_7002](https://github.com/user-attachments/assets/587a406e-570f-4242-a348-864cf8a4bc93)
 
 The setup includes three machines:
-1. Machine 1 runs the simulator drone and is connected to the TX SDR
-2. Machine 2 connected to the RX SDR receives drone messages OTA and broadcasts messages to network
-3. Machine 3 runs the GCS and receives drone messages broadcasted over the network from machine 2
+1. Machine 1 (Center) runs the simulator drone and is connected to the TX SDR
+2. Machine 2 (Furthest Left) connected to the RX SDR receives drone messages OTA and broadcasts messages to network
+3. Machine 3 (Furthest Right) runs the GCS and receives drone messages broadcasted over the network from machine 2
 
 
 ### Below is a short video demo fo the simulator:
