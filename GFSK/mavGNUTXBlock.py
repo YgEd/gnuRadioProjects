@@ -64,7 +64,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 class mav_packet_source(gr.sync_block):
-    def __init__(self, metrics_logger=None):
+    def __init__(self, freq, metrics_logger=None):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Source",
@@ -80,7 +80,7 @@ class mav_packet_source(gr.sync_block):
         # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
         self.sync_word = sync_word
         # Define postamble: at least 4 bytes / 32 bits
-
+        self.freq = freq
         self.packet_queue = []
 
         # mavlink stuff
@@ -197,7 +197,7 @@ class mav_packet_source(gr.sync_block):
         }
 
         if self.metrics_logger is not None:
-            self.metrics_logger.log_packet_outcome(packet_info, success=True, ber='N/A')
+            self.metrics_logger.log_packet_outcome('TX', self.freq, packet_info, success=True, ber='N/A')
         
         self.packet_queue.extend(packet)
 

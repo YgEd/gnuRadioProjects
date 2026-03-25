@@ -29,7 +29,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
+    def __init__(self, freq, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -48,6 +48,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.sync_word    = sync_word
         self.sync_len     = len(sync_word)
         self.state        = 'SEARCHING'
+        self.freq = freq
         self.bit_buffer   = []
         self.payload_len  = 0
         self._stopped = False
@@ -164,7 +165,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'packet_bytes':bytearray(),
                                 'message':f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
                             }
-                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
+                            self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
@@ -208,7 +209,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'packet_bytes':packet_bytes,
                                 'message':f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
                             }
-                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
+                            self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
@@ -236,7 +237,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'packet_bytes':packet_bytes,
                                 'message':msg
                             }
-                        self.metrics_logger.log_packet_outcome(packet_info, success=True, ber=ber)
+                        self.metrics_logger.log_packet_outcome('RX', self.freq ,packet_info, success=True, ber=ber)
                         if self.publish:
                             try:
                                 # publish mavlink message to port 8080 for gcs

@@ -46,6 +46,7 @@ import threading
 from scipy.signal import welch
 from collections import deque
 import sitl_manager as sitl
+import libsql
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,9 @@ class MetricsLogger:
         self.filepath = os.path.join(log_dir, f'rf-metrics-{now}.csv')
         self._lock = threading.Lock()
 
+        # variable to mark when the object is active to know when to cleanup
+        self.active = None
+
         # Latest IQ-derived metrics — updated by RFMetricsProbe
         self._iq_metrics = {
             'snr_db':            None,
@@ -93,10 +97,95 @@ class MetricsLogger:
 
         self._write_header()
 
+    def _writedb(self):
+        try:
+            print('[MetricLogger] Attempting to connect to db...')
+            conn = libsql.connect(
+                "rfdata.db",
+                sync_url = os.getenv("TURSO_DB_URL"),
+                auth_token = os.getenv("TURSO_DB_TOKEN")
+            )
+            print('[MetricLogger] Successfully connected to db, writing to db...')
+        except Exception as e:
+            print(f'[MetricLogger] Failed to conenct to db: {e}')
+
+        
+
+        headers = [
+            # Original measurement fields
+            'timestamp', 'TX/RX', 'frequency', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            # Discretized / derived fields
+            'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
+            # Detailed packet info fields
+            'MAVLink_message', 'payload_len', 'payload_len_crc', 'payload_crc',
+            'raw_payload_bytes', 'whitened_payload_bytes', 'full_packet_bytes'
+        ]
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS metrics (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   TEXT,
+                TX/RX       TEXT,
+                frequency   REAL,
+                snr_db      REAL,
+                noise_floor_dbm     REAL,
+                freq_offset_hz      REAL,
+                doppler_hz          REAL,
+                jitter_ns           REAL,
+                ber                 REAL,
+                snr_bin             TEXT,
+                channelnoise_bin    TEXT,
+                freq_offset_bin     TEXT,
+                doppler_bin         TEXT,
+                jitter_bin          TEXT,
+                ber_bin             TEXT,
+                packet_success      BOOL,
+                mavlink_msg         TEXT,
+                payload_len         INTEGER,
+                payload_len_crc     INTEGER,
+                payload_crc         INTEGER,
+                raw_payload_bytes   BLOB,
+                whitened_payload_bytes  BLOB,
+                raw_packet_bytes    BLOB
+                     )
+                     """)
+        
+        with open(self.filepath) as f:
+            reader = csv.DictReader(f)
+            rows=[tuple(row[h] for h in headers) for row in reader]
+        
+        columns=', '.join(headers)
+        placeholders=', '.join('?' * len(headers))
+        sql = f"INSERT INTO metrics ({columns}) VALUES ({placeholders})"
+
+        conn.executemany(
+            sql,
+            rows
+        )
+
+        try:
+            conn.commit()
+            conn.sync()
+            print("[MetricLogger] wrote logs to db succesfully!")
+        except Exception as e: 
+            print(f"[MetricLogger] failed to write logs to db: {e}")
+
+    
+    def start(self):
+        self.active = True
+        print("[MetricLogger] MetricLogger Activated")
+
+    def close(self):
+        if self.active is not None:
+            print("[MetricLogger] Closing metriclogger and writing logs to db")
+            self._writedb()
+            # write to db work
+            self.active = None
+
     def _write_header(self):
         headers = [
             # Original measurement fields
-            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            'timestamp', 'TX/RX', 'frequency','snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
             # Discretized / derived fields
             'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
             # Detailed packet info fields
@@ -129,7 +218,7 @@ class MetricsLogger:
             self._baseline_freq_hz = freq_hz
         print(f"[MetricsLogger] Baseline freq set: {freq_hz:.2f} Hz offset from center")
 
-    def log_packet_outcome(self, packet_info, success: bool, ber: float | str):
+    def log_packet_outcome(self, TXRX, freq, packet_info, success: bool, ber: float | str):
         """
         Called by mav_packet_reader after each packet attempt.
         Merges with latest IQ and packet metrics and writes one CSV row.
@@ -149,7 +238,7 @@ class MetricsLogger:
 
         headers = [
             # Original measurement fields
-            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            'timestamp', 'TX/RX', 'frequency','snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
             # Discretized / derived fields
             'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
             # Detailed packet info fields
@@ -163,6 +252,8 @@ class MetricsLogger:
         # Step 3: populate the base fields
         row.update({
             'timestamp': datetime.datetime.now().isoformat(),
+            'TXRX': TXRX,
+            'frequency': freq,
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
             'freq_offset_hz': m.get('freq_offset_hz'),
