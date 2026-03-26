@@ -205,7 +205,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
 
         # Metrics blocks
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
         # Active metrics logger
         self.metrics_logger.start()
 

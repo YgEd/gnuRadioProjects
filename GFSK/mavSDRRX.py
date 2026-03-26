@@ -211,7 +211,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate

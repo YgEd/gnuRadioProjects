@@ -78,8 +78,9 @@ class MetricsLogger:
     metrics from mav_packet_reader, merges them, and writes to CSV.
     """
 
-    def __init__(self, log_dir='packet-logs'):
+    def __init__(self, gain, log_dir='packet-logs'):
         self.log_dir = log_dir
+        self.gain = gain
         os.makedirs(log_dir, exist_ok=True)
 
         now = datetime.datetime.now().isoformat()
@@ -103,7 +104,7 @@ class MetricsLogger:
         self._baseline_freq_hz = None
         self.headers = [
             # Original measurement fields
-            'timestamp', 'tx_rx', 'frequency', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            'timestamp', 'tx_rx', 'gain', 'frequency', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
             # Discretized / derived fields
             'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'packet_success',
             # Detailed packet info fields
@@ -131,6 +132,7 @@ class MetricsLogger:
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp   TEXT,
                 tx_rx       TEXT,
+                gain        INTEGER,
                 frequency   REAL,
                 snr_db      REAL,
                 noise_floor_dbm     REAL,
@@ -155,7 +157,7 @@ class MetricsLogger:
                      )
                      """)
         
-        batch_size = 50
+        batch_size = 200
         sql = (
             f"INSERT INTO metrics ({', '.join(self.headers)}) "
             f"VALUES ({', '.join('?' * len(self.headers))})"
@@ -252,6 +254,7 @@ class MetricsLogger:
         row.update({
             'timestamp': datetime.datetime.now().isoformat(),
             'tx_rx': TXRX,
+            'gain': self.gain,
             'frequency': freq,
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
