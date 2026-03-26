@@ -26,6 +26,7 @@ decorator==5.1.1
 defer==1.0.6
 distro==1.9.0
 distro-info==1.7+build1
+dotenv==0.9.9
 duplicity==2.1.4
 empy==3.3.4
 fastcrc==0.3.5
@@ -45,6 +46,7 @@ language-selector==0.1
 launchpadlib==1.11.0
 lazr.restfulclient==0.14.6
 lazr.uri==1.0.6
+libsql==0.1.11
 louis==3.29.0
 lxml==5.2.1
 lz4==4.0.2+dfsg
@@ -90,6 +92,7 @@ pyserial==3.5
 python-apt==2.7.7+ubuntu5.1
 python-dateutil==2.8.2
 python-debian==0.1.49+ubuntu2
+python-dotenv==1.2.2
 pytz==2024.1
 pyxdg==0.28
 PyYAML==6.0.1
