@@ -185,7 +185,7 @@ class MetricsLogger:
 
                 for i, row in enumerate(batch, 1):
                     conn.execute(sql, row)
-                    print(f'\r[MetricLogger]   Row {i}/{total_rows} Batch {batch_num}', end='', flush=True)
+                    print(f'\r[MetricLogger]   Row {i}/{total_rows-total_written} Batch {batch_num}', end='', flush=True)
 
                 conn.commit()
                 total_written += len(batch)
