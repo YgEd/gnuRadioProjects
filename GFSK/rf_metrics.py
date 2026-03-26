@@ -105,7 +105,7 @@ class MetricsLogger:
             # Discretized / derived fields
             'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'packet_success',
             # Detailed packet info fields
-            'mavlink_msg', 'payload_len', 'payload_len_crc', 'payload_crc',
+            'message', 'payload_len', 'payload_len_crc', 'payload_crc',
             'raw_payload_bytes', 'whitened_payload_bytes', 'raw_packet_bytes'
         ]
         self._write_header()
@@ -146,7 +146,7 @@ class MetricsLogger:
                 jitter_bin          TEXT,
                 ber_bin             TEXT,
                 packet_success      BOOL,
-                mavlink_msg         TEXT,
+                message         TEXT,
                 payload_len         INTEGER,
                 payload_len_crc     INTEGER,
                 payload_crc         INTEGER,
@@ -249,37 +249,38 @@ class MetricsLogger:
             'ber': ber,
         })
 
+
         # Step 4: populate discretized fields if measurements available
         if all(v is not None for v in m.values()):
             row.update({
-                'SNR': bin_snr(m['snr_db']),
-                'ChannelNoise': bin_channel_noise(m['noise_floor_dbm']),
-                'FreqOffset': bin_freq_offset(m['freq_offset_hz']),
-                'Doppler': bin_doppler(m['doppler_hz']),
-                'Jitter': bin_jitter(m['jitter_ns']),
-                'BER': bin_ber(ber),
-                'PacketSuccess': 'success' if success else 'failure'
+                'snr_bin': bin_snr(m['snr_db']),
+                'channelnoise_bin': bin_channel_noise(m['noise_floor_dbm']),
+                'freq_offset_bin': bin_freq_offset(m['freq_offset_hz']),
+                'doppler_bin': bin_doppler(m['doppler_hz']),
+                'jitter_bin': bin_jitter(m['jitter_ns']),
+                'ber_bin': bin_ber(ber),
+                'packet_success': 'success' if success else 'failure'
             })
         else:
             row.update({
-                'SNR': 'unknown',
-                'ChannelNoise': 'unknown',
-                'FreqOffset': 'unknown',
-                'Doppler': 'unknown',
-                'Jitter': 'unknown',
-                'BER': 'unknown',
-                'PacketSuccess': 'unknown'
+                'snr_bin': 'unknown',
+                'channelnoise_bin': 'unknown',
+                'freq_offset_bin': 'unknown',
+                'doppler_bin': 'unknown',
+                'jitter_bin': 'unknown',
+                'ber_bin': 'unknown',
+                'packet_success': False
             })
 
         # Step 5: populate detailed packet info fields
         row.update({
-            'MAVLink_message': fmt(packet_info['message']),
+            'message': fmt(packet_info['message']),
             'payload_len': fmt(packet_info['payload_len']),
             'payload_len_crc': fmt(packet_info['payload_len_crc']),
             'payload_crc': fmt(packet_info['payload_crc']),
             'raw_payload_bytes': fmt(packet_info['raw_payload_bytes']),
             'whitened_payload_bytes': fmt(packet_info['whitened_payload_bytes']),
-            'full_packet_bytes': fmt(packet_info['packet_bytes'])
+            'raw_packet_bytes': fmt(packet_info['packet_bytes'])
         })
 
         # Step 6: write row to CSV safely

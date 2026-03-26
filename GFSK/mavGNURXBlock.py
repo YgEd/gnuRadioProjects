@@ -162,7 +162,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_crc':bytearray(),
                                 'raw_payload_bytes':bytearray(),
                                 'whitened_payload_bytes':bytearray(),
-                                'packet_bytes':bytearray(),
+                                'raw_packet_bytes':bytearray(),
                                 'message':f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
                             }
                             self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
@@ -206,7 +206,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([crc8(self.length_bytes)]),
                                 'payload_crc':bytearray(received_crc_bytes),
-                                'packet_bytes':packet_bytes,
+                                'raw_packet_bytes':packet_bytes,
                                 'message':f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
                             }
                             self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
@@ -234,7 +234,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([crc8(self.length_bytes)]),
                                 'payload_crc':bytearray(received_crc_bytes),
-                                'packet_bytes':packet_bytes,
+                                'raw_packet_bytes':packet_bytes,
                                 'message':msg
                             }
                         self.metrics_logger.log_packet_outcome('RX', self.freq ,packet_info, success=True, ber=ber)

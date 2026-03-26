@@ -186,13 +186,14 @@ class mav_packet_source(gr.sync_block):
         except Exception as e:
             print(f"[GNUTXBlock] Error when converting payload bytes to mavlink string: {e}")
 
+
         packet_info = {
             'raw_payload_bytes':bytearray(message),
             'whitened_payload_bytes':whitened_msg,
             'payload_len':len(message),
             'payload_len_crc':bytearray([len_crc_byte]),
             'payload_crc':bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
-            'packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
+            'raw_packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
             'message':msg
         }
 
