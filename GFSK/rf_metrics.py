@@ -280,7 +280,7 @@ class MetricsLogger:
             'payload_crc': fmt(packet_info['payload_crc']),
             'raw_payload_bytes': fmt(packet_info['raw_payload_bytes']),
             'whitened_payload_bytes': fmt(packet_info['whitened_payload_bytes']),
-            'raw_packet_bytes': fmt(packet_info['packet_bytes'])
+            'raw_packet_bytes': fmt(packet_info['raw_packet_bytes'])
         })
 
         # Step 6: write row to CSV safely
