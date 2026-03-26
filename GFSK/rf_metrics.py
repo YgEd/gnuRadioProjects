@@ -48,6 +48,8 @@ from collections import deque
 import sitl_manager as sitl
 import libsql
 from dotenv import load_dotenv
+import itertools
+import pandas as pd
 
 
 
@@ -124,9 +126,6 @@ class MetricsLogger:
             return
 
         
-
-       
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS metrics (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,25 +155,38 @@ class MetricsLogger:
                      )
                      """)
         
-        with open(self.filepath) as f:
-            reader = csv.DictReader(f)
-            rows=[tuple(row[h] for h in self.headers) for row in reader]
-        
-        columns=', '.join(self.headers)
-        placeholders=', '.join('?' * len(self.headers))
-        sql = f"INSERT INTO metrics ({columns}) VALUES ({placeholders})"
-
-        conn.executemany(
-            sql,
-            rows
+        batch_size = 50
+        sql = (
+            f"INSERT INTO metrics ({', '.join(self.headers)}) "
+            f"VALUES ({', '.join('?' * len(self.headers))})"
         )
 
-        try:
-            conn.commit()
-            conn.sync()
-            print("[MetricLogger] wrote logs to db succesfully!")
-        except Exception as e: 
-            print(f"[MetricLogger] failed to write logs to db: {e}")
+        with open(self.filepath) as f:
+            reader = csv.DictReader(f)
+            batch_num = 0
+            total_written = 0
+
+            while True:
+                batch = [
+                    tuple(row[h] for h in self.headers) for row in itertools.islice(reader, batch_size)
+                ]
+
+                if not batch:   # islice returns empty list when reader is exhausted
+                    break
+
+                batch_num += 1
+                print(f'[MetricLogger] Writing batch {batch_num} ({len(batch)} rows)...')
+
+                for i, row in enumerate(batch, 1):
+                    conn.execute(sql, row)
+                    print(f'\r[MetricLogger]   Row {i}/{len(batch)}', end='', flush=True)
+
+                conn.commit()
+                total_written += len(batch)
+                print(f'\n[MetricLogger] Batch {batch_num} committed. Total so far: {total_written}')
+
+        conn.sync()
+        print(f'[MetricLogger] Done. {total_written} rows written.')
 
     
     def start(self):
@@ -633,7 +645,6 @@ def load_metrics_for_bn(csv_path: str):
         model = build_model()
         model = update_cpd_from_observations(model, df)
     """
-    import pandas as pd
 
     df = pd.read_csv(csv_path)
 
