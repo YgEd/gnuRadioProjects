@@ -156,12 +156,16 @@ class MetricsLogger:
                 raw_packet_bytes    BLOB
                      )
                      """)
+        with open(self.filepath) as f:
+            total_rows = sum(1 for _ in f) - 1  # subtract 1 for header
         
         batch_size = 200
         sql = (
             f"INSERT INTO metrics ({', '.join(self.headers)}) "
             f"VALUES ({', '.join('?' * len(self.headers))})"
         )
+
+        print(f'[MetricLogger] {total_rows} rows to write...')
 
         with open(self.filepath) as f:
             reader = csv.DictReader(f)
@@ -181,7 +185,7 @@ class MetricsLogger:
 
                 for i, row in enumerate(batch, 1):
                     conn.execute(sql, row)
-                    print(f'\r[MetricLogger]   Row {i}/{len(batch)}', end='', flush=True)
+                    print(f'\r[MetricLogger]   Row {i}/{total_rows} Batch {batch_num}', end='', flush=True)
 
                 conn.commit()
                 total_written += len(batch)

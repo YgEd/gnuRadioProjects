@@ -129,7 +129,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                 if len(self.bit_buffer) >= self.sync_len:
                     tail = self.bit_buffer[-self.sync_len:]
                     if np.array_equal(tail, self.sync_word):
-                        print("Sync word found!")
+                        print("[GNURXBlock] sync word found!")
                         self.bit_buffer   = []
                         self.state        = 'READ_LENGTH'
                         self.constructed_bits = list(self.sync_word)
