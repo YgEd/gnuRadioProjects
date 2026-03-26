@@ -295,6 +295,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
+        self.source.stop()
         self.metrics_logger.close()
         self.stop()
         self.wait()
