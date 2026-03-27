@@ -5,7 +5,9 @@ from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 from tqdm import tqdm
 import sys
-from pgmpy.estimators import MaximumLikelihoodEstimator
+from pgmpy.estimators import MaximumLikelihoodEstimator, BayesianEstimator
+import os
+import time
 
 def bin_gain(gain_db):
     """Bin RX gain setting."""
@@ -107,7 +109,8 @@ def update_cpd_from_observations(model, observations_df: pd.DataFrame):
 
     model.fit(
         observations_df,
-        estimator=MaximumLikelihoodEstimator,
+        # estimator=MaximumLikelihoodEstimator,
+        estimator=BayesianEstimator,
         # Equivalent sample size for Bayesian smoothing — prevents zero probabilities
         # from rare combinations that haven't been observed yet
         # he `equivalent_sample_size` parameter adds a form of smoothing called a **Dirichlet prior** or **Laplace smoothing**. 
@@ -133,8 +136,8 @@ def build_model():
         ('FreqOffset', 'BER'),
         ('Doppler', 'BER'),
         ('Jitter', 'BER'),
-        ('BER', 'PacketSuccess'),
-        ('SyncWordValid', 'PacketSuccess')
+        ('BER', 'PacketSuccess')
+        # ('SyncWordValid', 'PacketSuccess')
     ])
 
     # Gain -- assumes nominal is most common operating point
@@ -178,13 +181,13 @@ def build_model():
         state_names={'Jitter': ['low', 'medium','high']}
     )
 
-    # Sync word - assuming well-designed sync word
-    cpd_sync = TabularCPD(
-        variable='SyncWordValid',
-        variable_card=2,
-        values=[[0.9], [0.1]],
-        state_names={'SyncWordValid': ['valid', 'invalid']}
-    )
+    # # Sync word - assuming well-designed sync word
+    # cpd_sync = TabularCPD(
+    #     variable='SyncWordValid',
+    #     variable_card=2,
+    #     values=[[0.9], [0.1]],
+    #     state_names={'SyncWordValid': ['valid', 'invalid']}
+    # )
 
 
     # SNR CPD P(SNR | Gain, Channel Noise)
@@ -288,7 +291,7 @@ def build_model():
         evidence=['SNR', 'FreqOffset', 'Doppler', 'Jitter'],
         evidence_card=[3, 3, 3, 3],
         state_names={
-            'BER': ['good', 'acceptable', 'poor'],
+            'BER': ['excellent', 'acceptable', 'poor'],
             'SNR': snr_states,
             'FreqOffset': freq_states,
             'Doppler': doppler_states,
@@ -305,30 +308,27 @@ def build_model():
 
         # Shape of values is determined by the possible outcomes of your current child state in this case 'PacketSuccess' x (combination of parent states)
         # in this case PacketSuccess can be 'success' or 'failure'
-        # Two parent states are BER that has 3 outcomes and SyncWordValid that has 2 outcomes 
-        # Values shape is then 2x3*2 == 2x6
+        # one parent state BER that has 3 outcomes 
+        # Values shape is then 2x3
         values=[
         
-            # col 1,4 BER=good
-            # col 2,5 BER=acceptable
-            # col 3,6 BER=poor
-            # col 1,2,3 SyncWV=Valid
-            # col 4,5,6 SyncWV=Invalid
-            [0.99, 0.75, 0.15, 0.10, 0.05, 0.02], #PacketSuccess=success
-            [0.01, 0.25, 0.85, 0.90, 0.95, 0.98] #PacketSuccess=failure
+            # col 1 BER=good
+            # col 2 BER=acceptable
+            # col 3 BER=poor
+            [ 0.95, 0.60, 0.05], #PacketSuccess=success
+            [ 0.05, 0.40, 0.95] #PacketSuccess=failure
         ],
-        evidence=['BER', 'SyncWordValid'],
-        evidence_card=[3, 2],
+        evidence=['BER'],
+        evidence_card=[3],
         state_names={
             'PacketSuccess': ['success', 'failure'],
-            'BER': ['good', 'acceptable', 'poor'],
-            'SyncWordValid': ['valid', 'invalid']
+            'BER': ['excellent', 'acceptable', 'poor']
         }
 
     )
 
     model.add_cpds(
-        cpd_gain, cpd_noise, cpd_freq, cpd_dopper, cpd_jitter, cpd_sync, cpd_snr, cpd_ber, cpd_packet
+        cpd_gain, cpd_noise, cpd_freq, cpd_dopper, cpd_jitter, cpd_snr, cpd_ber, cpd_packet
     )
 
     try:
@@ -352,15 +352,69 @@ def query_packet_success(model, evidence: dict):
 if __name__ == "__main__":
     model = build_model()
     print("model succesfully built!")
-     # --- Forward inference: predict packet success from observed conditions ---
-    evidence = {
-        'SNR':          'marginal',
-        'FreqOffset':   'low',
-        'Doppler':      'negligible',
-        'Jitter':       'medium',
-        'SyncWordValid':'valid',
-    }
-    result = query_packet_success(model, evidence)
-    print("P(PacketSuccess | conditions):")
-    for state, prob in result.items():
-        print(f"  {state}: {prob:.3f}")
+
+    file_name = None
+
+    if len(sys.argv) > 1:
+        file_name = sys.argv[1]
+        if not os.path.isfile(file_name):
+            print(f"Cannot reach input file: {file_name}\n Usage: python3 {sys.argv[0]} <optional input file to update cpds>")
+            sys.exit(1)
+
+    if file_name is not None:
+        observations = []
+        
+
+        rfdf = pd.read_csv(file_name)
+
+        for _, data in rfdf.iterrows():
+            observations.append({
+                'Gain': data['gain'],
+                'SNR': data['snr_bin'],
+                'ChannelNoise': data['channelnoise_bin'],
+                'FreqOffset': data['freq_offset_bin'],
+                'Doppler': data['doppler_bin'],
+                'Jitter': data['jitter_bin'],
+                'BER': data['ber_bin'],
+                'PacketSuccess': data['packet_success'],
+            })
+        
+        # convert constructed dictionary with updated compatible key names
+        obdf = pd.DataFrame(observations)
+        
+        print(f"Updating Model from {file_name}")
+        update_cpd_from_observations(model, obdf)
+        print("Updated Model!")
+        for cpd in model.cpds:
+            print(f"=== {cpd.variable} ===")
+            print(f"  parents: {cpd.variables[1:]}")
+            print(f"  values:\n{cpd.values}")
+            print()
+
+
+        print(f"Based on these Keys and Possible Values:\n")
+        time.sleep(2)
+        for cpd in model.cpds:
+            print(f"=== {cpd.variable} ===")
+            print(f"  states:  {cpd.state_names[cpd.variable]}")
+            print(f"  parents: {cpd.variables[1:]}")
+        time.sleep(1)
+        raw_in = input("\nEnter in key value pair evidence to see BNM prediction (SNR good BER poor):\n")
+        # --- Forward inference: predict packet success from observed conditions ---
+        # evidence = {
+        #     'SNR':          'good',
+        #     'BER':          'poor',
+        # }
+
+        # split items based on spaces
+        items = raw_in.split()
+        item_kv_pairs = iter(items)
+        evidence = dict(zip(item_kv_pairs, item_kv_pairs))
+
+        print(f"\nTesting BNM on evidence:\n{evidence}:\n")
+
+        result = query_packet_success(model, evidence)
+        print(f"From this evidence: {evidence}\nP(PacketSuccess | conditions):")
+        for state, prob in result.items():
+            print(f"  {state}: {prob:.3f}")
+        print()
