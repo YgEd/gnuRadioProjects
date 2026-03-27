@@ -9,6 +9,13 @@ from pgmpy.estimators import MaximumLikelihoodEstimator, BayesianEstimator
 import os
 import time
 
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    ENDC = '\033[0m' # Reset code
+
 def bin_gain(gain_db):
     """Bin RX gain setting."""
     if gain_db < 20:
@@ -392,29 +399,32 @@ if __name__ == "__main__":
             print()
 
 
-        print(f"Based on these Keys and Possible Values:\n")
-        time.sleep(2)
+        print(f"Based on the following Keys and Possible Values...\n")
+        time.sleep(1)
         for cpd in model.cpds:
             print(f"=== {cpd.variable} ===")
             print(f"  states:  {cpd.state_names[cpd.variable]}")
             print(f"  parents: {cpd.variables[1:]}")
         time.sleep(1)
-        raw_in = input("\nEnter in key value pair evidence to see BNM prediction (SNR good BER poor):\n")
-        # --- Forward inference: predict packet success from observed conditions ---
-        # evidence = {
-        #     'SNR':          'good',
-        #     'BER':          'poor',
-        # }
 
-        # split items based on spaces
-        items = raw_in.split()
-        item_kv_pairs = iter(items)
-        evidence = dict(zip(item_kv_pairs, item_kv_pairs))
+        for _ in range(1000):
+            raw_in = input(f"\nEnter in key value pair evidence to see BNM prediction (SNR good BER poor) or {Colors.RED}q to quit{Colors.ENDC}:\n")
+            if raw_in.lower().strip() != 'q':
+                # --- Forward inference: predict packet success from observed conditions ---
+                # evidence = {
+                #     'SNR':          'good',
+                #     'BER':          'poor',
+                # }
 
-        print(f"\nTesting BNM on evidence:\n{evidence}:\n")
+                # split items based on spaces
+                items = raw_in.split()
+                item_kv_pairs = iter(items)
+                evidence = dict(zip(item_kv_pairs, item_kv_pairs))
 
-        result = query_packet_success(model, evidence)
-        print(f"From this evidence: {evidence}\nP(PacketSuccess | conditions):")
-        for state, prob in result.items():
-            print(f"  {state}: {prob:.3f}")
-        print()
+                result = query_packet_success(model, evidence)
+                print(f"\nBased on this evidence:\n\n{Colors.YELLOW}{evidence}{Colors.ENDC}\n\nWe see the following PacketSuccess state prediction:\n\n{Colors.GREEN}P(PacketSuccess | conditions):")
+                for state, prob in result.items():
+                    print(f"  {state}: {prob:.3f}")
+                print(f"{Colors.ENDC}")
+            else:
+                break
