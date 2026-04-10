@@ -211,7 +211,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
+        self.metrics_logger = MetricsLogger(getGain=self.getGain)
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
@@ -245,6 +245,9 @@ class flow_graph(gr.top_block, Qt.QWidget):
         """Handle window close button — same cleanup as SIGINT."""
         self._safe_shutdown()
         event.accept()
+
+    def getGain(self):
+        return self.sdr_RF_gain 
 
     def _safe_shutdown(self):
         """Zero RF gains and stop the flow graph cleanly."""
