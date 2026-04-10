@@ -10,6 +10,8 @@ import sys
 import sip
 import signal
 import time
+import gc
+import subprocess
 
 class flow_graph(gr.top_block,Qt.QWidget):
     def __init__(self):
@@ -205,7 +207,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
 
         # Metrics blocks
-        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
+        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
         # Active metrics logger
         self.metrics_logger.start()
 
@@ -218,7 +220,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         )
 
         # packet source
-        self.source = mav_packet_source(self.center_freq , self.osmosdr_sink, metrics_logger=self.metrics_logger)
+        self.source = mav_packet_source(self.center_freq , self.setSDRGain, self.osmosdr_sink, metrics_logger=self.metrics_logger)
 
 
         
@@ -285,21 +287,40 @@ class flow_graph(gr.top_block,Qt.QWidget):
     
 
     def _safe_shutdown(self):
-        """Zero RF gains and stop the flow graph cleanly."""
+        """Fully stop BladeRF transmission and close the device."""
         print("Shutting down BladeRF TX...")
         try:
-            # Kill RF output before stopping the scheduler
-            self.osmosdr_sink.set_gain(0, 0)
+            gain = self.osmosdr_sink.set_gain(0, 0)
             self.osmosdr_sink.set_if_gain(0, 0)
             self.osmosdr_sink.set_bb_gain(0, 0)
+            self.osmosdr_sink.set_center_freq(2.4e9, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
+        # Stop the flow graph FIRST so the sink stops pulling samples
         self.source.stop()
         self.metrics_logger.close()
         self.stop()
         self.wait()
-        print("Flow graph stopped.")
+
+        # Now close the actual device handle
+        try:
+            del self.osmosdr_sink
+            self.osmosdr_sink = None
+            gc.collect()
+        except Exception as e:
+            print(f"Warning: could not release sink: {e}", file=sys.stderr)
+
+        print("Flow graph stopped and device released.")
+    
+    # Method to update gain so it is accurately reflected in the logs
+    def setSDRGain(self, gain):
+        self.sdr_RF_gain = gain
+        print(f'[mavSDRTX] Gain updated to {self.sdr_RF_gain}')
+
+    def getSDRgain(self):
+        return self.sdr_RF_gain
+
     
     
 if __name__ == '__main__':

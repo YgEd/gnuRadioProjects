@@ -64,7 +64,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 class mav_packet_source(gr.sync_block):
-    def __init__(self, freq, bladerf=None, metrics_logger=None):
+    def __init__(self, freq, set_bladerf_gain=None, bladerf=None, metrics_logger=None):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Source",
@@ -105,6 +105,7 @@ class mav_packet_source(gr.sync_block):
         self._time_since_gain_change = int(time.time())
 
         self._gain_index = 0
+        self.set_bladerf_gain = set_bladerf_gain
 
 
     
@@ -235,15 +236,19 @@ class mav_packet_source(gr.sync_block):
                 print(f"[mavGNUTX] Sending {msg.get_type()} Message")
                 self.send_message(msg.pack(self._mav))
                 self._time_since_telem = int(time.time())
+    
         
     
     def setGain(self, curr_time):
         gain_set = None
-        gains = [30.0, 15.0, 10.0, 5.0, 3.0, 1.0]
-        if curr_time >= self._time_since_gain_change + 5:
+        gains = [30.0, 20.0, 15.0, 10.0, 5.0, 3.0, 2.0, 1.0]
+        if curr_time >= self._time_since_gain_change + 120:
             self._gain_index = (self._gain_index + 1) % len(gains)
             gain_set = self.bladerf.set_gain(gains[self._gain_index],0)
             self._time_since_gain_change = int(time.time())
+
+            # update parents gain value so it is logged correctly
+            self.set_bladerf_gain(gain_set)
         else:
             gain_set = None
         return gain_set

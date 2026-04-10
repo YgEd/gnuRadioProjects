@@ -78,9 +78,9 @@ class MetricsLogger:
     metrics from mav_packet_reader, merges them, and writes to CSV.
     """
 
-    def __init__(self, gain, log_dir='packet-logs'):
+    def __init__(self, getGain, log_dir='packet-logs'):
         self.log_dir = log_dir
-        self.gain = gain
+        self.getGain = getGain
         os.makedirs(log_dir, exist_ok=True)
 
         now = datetime.datetime.now().isoformat()
@@ -121,11 +121,12 @@ class MetricsLogger:
                 sync_url = os.getenv("TURSO_DB_URL"),
                 auth_token = os.getenv("TURSO_DB_TOKEN")
             )
-            print('[MetricLogger] Successfully connected to db, writing to db...')
+            conn.sync() # force immediate connection to db
         except Exception as e:
-            print(f'[MetricLogger] Failed to conenct to db: {e}')
+            print(f'[MetricLogger] Failed to connect to db: {e}')
             return
 
+        print('[MetricLogger] Successfully connected to db, writing to db...')
         
         conn.execute("""
             CREATE TABLE IF NOT EXISTS metrics (
@@ -261,7 +262,7 @@ class MetricsLogger:
         row.update({
             'timestamp': datetime.datetime.now().isoformat(),
             'tx_rx': TXRX,
-            'gain': self.gain,
+            'gain': self.getGain(),
             'frequency': freq,
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
