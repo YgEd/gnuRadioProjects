@@ -46,6 +46,11 @@ import threading
 from scipy.signal import welch
 from collections import deque
 import sitl_manager as sitl
+import libsql
+from dotenv import load_dotenv
+import itertools
+import pandas as pd
+
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +60,9 @@ SAMP_RATE          = 100e3    # post-resampler sample rate
 SAMPLES_PER_SYMBOL = 4
 CENTER_FREQ        = 915e6
 SYMBOL_RATE        = SAMP_RATE / SAMPLES_PER_SYMBOL   # 25 kHz
+
+# load env
+load_dotenv()
 
 
 # ---------------------------------------------------------------------------
@@ -70,13 +78,17 @@ class MetricsLogger:
     metrics from mav_packet_reader, merges them, and writes to CSV.
     """
 
-    def __init__(self, log_dir='packet-logs'):
+    def __init__(self, gain, log_dir='packet-logs'):
         self.log_dir = log_dir
+        self.gain = gain
         os.makedirs(log_dir, exist_ok=True)
 
         now = datetime.datetime.now().isoformat()
         self.filepath = os.path.join(log_dir, f'rf-metrics-{now}.csv')
         self._lock = threading.Lock()
+
+        # variable to mark when the object is active to know when to cleanup
+        self.active = None
 
         # Latest IQ-derived metrics — updated by RFMetricsProbe
         self._iq_metrics = {
@@ -90,23 +102,118 @@ class MetricsLogger:
         # Static baseline freq for Doppler calculation.
         # Set this from a known stationary measurement before flight.
         self._baseline_freq_hz = None
-
+        self.headers = [
+            # Original measurement fields
+            'timestamp', 'tx_rx', 'gain', 'frequency', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            # Discretized / derived fields
+            'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'packet_success',
+            # Detailed packet info fields
+            'message', 'payload_len', 'payload_len_crc', 'payload_crc',
+            'raw_payload_bytes', 'whitened_payload_bytes', 'raw_packet_bytes'
+        ]
         self._write_header()
 
-    def _write_header(self):
-        headers = [
-            # Original measurement fields
-            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
-            # Discretized / derived fields
-            'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
-            # Detailed packet info fields
-            'MAVLink_message', 'payload_len', 'payload_len_crc', 'payload_crc',
-            'raw_payload_bytes', 'whitened_payload_bytes', 'full_packet_bytes'
-        ]
+    def _writedb(self):
+        try:
+            print('[MetricLogger] Attempting to connect to db...')
+            conn = libsql.connect(
+                "rfdata.db",
+                sync_url = os.getenv("TURSO_DB_URL"),
+                auth_token = os.getenv("TURSO_DB_TOKEN")
+            )
+            print('[MetricLogger] Successfully connected to db, writing to db...')
+        except Exception as e:
+            print(f'[MetricLogger] Failed to conenct to db: {e}')
+            return
 
+        
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS metrics (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   TEXT,
+                tx_rx       TEXT,
+                gain        INTEGER,
+                frequency   REAL,
+                snr_db      REAL,
+                noise_floor_dbm     REAL,
+                freq_offset_hz      REAL,
+                doppler_hz          REAL,
+                jitter_ns           REAL,
+                ber                 REAL,
+                snr_bin             TEXT,
+                channelnoise_bin    TEXT,
+                freq_offset_bin     TEXT,
+                doppler_bin         TEXT,
+                jitter_bin          TEXT,
+                ber_bin             TEXT,
+                packet_success      BOOL,
+                message         TEXT,
+                payload_len         INTEGER,
+                payload_len_crc     INTEGER,
+                payload_crc         INTEGER,
+                raw_payload_bytes   BLOB,
+                whitened_payload_bytes  BLOB,
+                raw_packet_bytes    BLOB
+                     )
+                     """)
+        with open(self.filepath) as f:
+            total_rows = sum(1 for _ in f) - 1  # subtract 1 for header
+        
+        batch_size = 200
+        sql = (
+            f"INSERT INTO metrics ({', '.join(self.headers)}) "
+            f"VALUES ({', '.join('?' * len(self.headers))})"
+        )
+
+        print(f'[MetricLogger] {total_rows} rows to write...')
+
+        with open(self.filepath) as f:
+            reader = csv.DictReader(f)
+            batch_num = 0
+            total_written = 0
+
+            while True:
+                batch = [
+                    tuple(row[h] for h in self.headers) for row in itertools.islice(reader, batch_size)
+                ]
+
+                if not batch:   # islice returns empty list when reader is exhausted
+                    break
+
+                batch_num += 1
+                print(f'[MetricLogger] Writing batch {batch_num} ({len(batch)} rows)...')
+
+                for i, row in enumerate(batch, 1):
+                    conn.execute(sql, row)
+                    print(f'\r[MetricLogger]   Row {i}/{total_rows-total_written} Batch {batch_num}', end='', flush=True)
+
+                conn.commit()
+                total_written += len(batch)
+                print(f'\n[MetricLogger] Batch {batch_num} committed. Total so far: {total_written}')
+
+        conn.sync()
+        print(f'[MetricLogger] Done. {total_written} rows written.')
+
+    
+    def start(self):
+        self.active = True
+        print("[MetricLogger] MetricLogger Activated")
+
+    def close(self):
+        if self.active is not None:
+            print("[MetricLogger] Closing metriclogger and writing logs to db")
+            try:
+                self._writedb()
+            except Exception as e:
+                print(f'[MetricLogger] Failed to connect to db: {e}')
+            # write to db work
+            self.active = None
+
+    def _write_header(self):
+    
         with open(self.filepath, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(headers)
+            writer.writerow(self.headers)
 
     def update_iq_metrics(self, snr_db, noise_floor_dbm,
                           freq_offset_hz, doppler_hz, jitter_ns):
@@ -129,7 +236,7 @@ class MetricsLogger:
             self._baseline_freq_hz = freq_hz
         print(f"[MetricsLogger] Baseline freq set: {freq_hz:.2f} Hz offset from center")
 
-    def log_packet_outcome(self, packet_info, success: bool, ber: float | str):
+    def log_packet_outcome(self, TXRX, freq, packet_info, success: bool, ber: float | str):
         """
         Called by mav_packet_reader after each packet attempt.
         Merges with latest IQ and packet metrics and writes one CSV row.
@@ -147,22 +254,15 @@ class MetricsLogger:
         with self._lock:
             m = dict(self._iq_metrics)  # snapshot
 
-        headers = [
-            # Original measurement fields
-            'timestamp', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
-            # Discretized / derived fields
-            'SNR', 'ChannelNoise', 'FreqOffset', 'Doppler', 'Jitter', 'BER', 'PacketSuccess',
-            # Detailed packet info fields
-            'MAVLink_message', 'payload_len', 'payload_len_crc', 'payload_crc',
-            'raw_payload_bytes', 'whitened_payload_bytes', 'full_packet_bytes'
-        ]
-
             # Step 2: initialize row with None for all headers
-        row = {key: None for key in headers}
+        row = {key: None for key in self.headers}
 
         # Step 3: populate the base fields
         row.update({
             'timestamp': datetime.datetime.now().isoformat(),
+            'tx_rx': TXRX,
+            'gain': self.gain,
+            'frequency': freq,
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
             'freq_offset_hz': m.get('freq_offset_hz'),
@@ -171,42 +271,43 @@ class MetricsLogger:
             'ber': ber,
         })
 
+
         # Step 4: populate discretized fields if measurements available
         if all(v is not None for v in m.values()):
             row.update({
-                'SNR': bin_snr(m['snr_db']),
-                'ChannelNoise': bin_channel_noise(m['noise_floor_dbm']),
-                'FreqOffset': bin_freq_offset(m['freq_offset_hz']),
-                'Doppler': bin_doppler(m['doppler_hz']),
-                'Jitter': bin_jitter(m['jitter_ns']),
-                'BER': bin_ber(ber),
-                'PacketSuccess': 'success' if success else 'failure'
+                'snr_bin': bin_snr(m['snr_db']),
+                'channelnoise_bin': bin_channel_noise(m['noise_floor_dbm']),
+                'freq_offset_bin': bin_freq_offset(m['freq_offset_hz']),
+                'doppler_bin': bin_doppler(m['doppler_hz']),
+                'jitter_bin': bin_jitter(m['jitter_ns']),
+                'ber_bin': bin_ber(ber),
+                'packet_success': 'success' if success else 'failure'
             })
         else:
             row.update({
-                'SNR': 'unknown',
-                'ChannelNoise': 'unknown',
-                'FreqOffset': 'unknown',
-                'Doppler': 'unknown',
-                'Jitter': 'unknown',
-                'BER': 'unknown',
-                'PacketSuccess': 'unknown'
+                'snr_bin': 'unknown',
+                'channelnoise_bin': 'unknown',
+                'freq_offset_bin': 'unknown',
+                'doppler_bin': 'unknown',
+                'jitter_bin': 'unknown',
+                'ber_bin': 'unknown',
+                'packet_success': False
             })
 
         # Step 5: populate detailed packet info fields
         row.update({
-            'MAVLink_message': fmt(packet_info['message']),
+            'message': fmt(packet_info['message']),
             'payload_len': fmt(packet_info['payload_len']),
             'payload_len_crc': fmt(packet_info['payload_len_crc']),
             'payload_crc': fmt(packet_info['payload_crc']),
             'raw_payload_bytes': fmt(packet_info['raw_payload_bytes']),
             'whitened_payload_bytes': fmt(packet_info['whitened_payload_bytes']),
-            'full_packet_bytes': fmt(packet_info['packet_bytes'])
+            'raw_packet_bytes': fmt(packet_info['raw_packet_bytes'])
         })
 
         # Step 6: write row to CSV safely
         with open(self.filepath, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=headers)
+            writer = csv.DictWriter(f, fieldnames=self.headers)
             if f.tell() == 0:
                 writer.writeheader()
             writer.writerow(row)
@@ -554,7 +655,6 @@ def load_metrics_for_bn(csv_path: str):
         model = build_model()
         model = update_cpd_from_observations(model, df)
     """
-    import pandas as pd
 
     df = pd.read_csv(csv_path)
 

@@ -1,0 +1,265 @@
+// ~->[DNET-1]->~
+
+// File created by an unlicensed user using Netica 7.01 on Apr 10, 2026 at 15:52:59 UTC.
+
+bnet rf_bnm {
+autoupdate = TRUE;
+whenchanged = 1775836379;
+
+visual V6 {
+	defdispform = BELIEFBARS;
+	nodelabeling = TITLE;
+	NodeMaxNumEntries = 50;
+	nodefont = font {shape= "Arial"; size= 9;};
+	linkfont = font {shape= "Arial"; size= 9;};
+	ShowLinkStrengths = 1;
+	resolution = 72;
+	drawingbounds = (1267, 720);
+	showpagebreaks = FALSE;
+	usegrid = TRUE;
+	gridspace = (6, 6);
+	NodeSet Node {BuiltIn = 1; Color = 0x00e1e1e1;};
+	NodeSet Nature {BuiltIn = 1; Color = 0x00f8eed2;};
+	NodeSet Deterministic {BuiltIn = 1; Color = 0x00d3caa6;};
+	NodeSet Finding {BuiltIn = 1; Color = 0x00c8c8c8;};
+	NodeSet Constant {BuiltIn = 1; Color = 0x00ffffff;};
+	NodeSet ConstantValue {BuiltIn = 1; Color = 0x00ffffb4;};
+	NodeSet Utility {BuiltIn = 1; Color = 0x00ffbdbd;};
+	NodeSet Decision {BuiltIn = 1; Color = 0x00dee8ff;};
+	NodeSet Documentation {BuiltIn = 1; Color = 0x00f0fafa;};
+	NodeSet Title {BuiltIn = 1; Color = 0x00ffffff;};
+	PrinterSetting A {
+		margins = (1270, 1270, 1270, 1270);
+		};
+	};
+
+node Gain {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = ();
+	probs = 
+		// low          moderate     high         
+		  (0.999998,    1e-6,        1e-6);
+	whenchanged = 0;
+	visual V6 {
+		center = (714, 192);
+		height = 6;
+		};
+	};
+
+node ChannelNoise {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = ();
+	probs = 
+		// low          moderate     high         
+		  (0.001386,    0.998613,    1e-6);
+	whenchanged = 0;
+	visual V6 {
+		center = (474, 312);
+		height = 1;
+		};
+	};
+
+node SNR {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = (ChannelNoise, Gain);
+	probs = 
+		// low          moderate     high          // ChannelNoise Gain     
+		  (0.999998,    1e-6,        1e-6,         // low          low      
+		   0.999998,    1e-6,        1e-6,         // low          moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low          high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate     low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate     high     
+		   0.3333333,   0.3333333,   0.3333333,    // high         low      
+		   0.3333333,   0.3333333,   0.3333333,    // high         moderate 
+		   0.3333333,   0.3333333,   0.3333333);   // high         high     ;
+	whenchanged = 0;
+	visual V6 {
+		center = (522, 36);
+		height = 8;
+		link 2 {
+			path = ((673, 159), (562, 70));
+			};
+		};
+	};
+
+node Doppler {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = ();
+	probs = 
+		// low          moderate     high         
+		  (0.999998,    1e-6,        1e-6);
+	whenchanged = 0;
+	visual V6 {
+		center = (156, 312);
+		height = 3;
+		};
+	};
+
+node FreqOffset {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = ();
+	probs = 
+		// low          moderate     high         
+		  (0.999998,    1e-6,        1e-6);
+	whenchanged = 0;
+	visual V6 {
+		center = (312, 378);
+		height = 2;
+		};
+	};
+
+node Jitter {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = ();
+	probs = 
+		// low          moderate     high         
+		  (0.999998,    1e-6,        1e-6);
+	whenchanged = 0;
+	visual V6 {
+		center = (90, 150);
+		height = 4;
+		};
+	};
+
+node BER {
+	discrete = TRUE;
+	states = (low, moderate, high);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = (Doppler, FreqOffset, Jitter, SNR);
+	probs = 
+		// low          moderate     high          // Doppler  FreqOffset Jitter   SNR      
+		  (0.830034,    0.163368,    0.006598,     // low      low        low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      low        high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      moderate   high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // low      high       high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate low        high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate moderate   high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // moderate high       high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     low        high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   high     moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     moderate   high     high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       low      low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       low      moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       low      high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       moderate low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       moderate moderate 
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       moderate high     
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       high     low      
+		   0.3333333,   0.3333333,   0.3333333,    // high     high       high     moderate 
+		   0.3333333,   0.3333333,   0.3333333);   // high     high       high     high     ;
+	whenchanged = 0;
+	visual V6 {
+		center = (348, 192);
+		height = 5;
+		link 1 {
+			path = ((209, 279), (296, 226));
+			};
+		link 3 {
+			path = ((175, 164), (263, 179));
+			};
+		link 4 {
+			path = ((486, 70), (385, 159));
+			};
+		};
+	};
+
+node PacketSuccess {
+	discrete = TRUE;
+	states = (success, failure);
+	kind = NATURE;
+	chance = CHANCE;
+	parents = (BER);
+	probs = 
+		// success      failure       // BER      
+		  (0.403895,    0.596105,     // low      
+		   0.993134,    0.006866,     // moderate 
+		   0.05,        0.95);        // high     ;
+	whenchanged = 0;
+	visual V6 {
+		center = (888, 48);
+		height = 7;
+		};
+	};
+};

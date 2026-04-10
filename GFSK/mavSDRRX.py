@@ -211,7 +211,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
+        self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
@@ -221,7 +222,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         )
        
         # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
-        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
+        self.destination = mav_packet_reader_with_metrics(self.center_freq, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
 
         ##########################
         # Connections
@@ -255,6 +256,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
             self.osmosdr_source.set_bb_gain(0, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
+        
+        self.metrics_logger.close()
 
         self.stop()
         self.wait()

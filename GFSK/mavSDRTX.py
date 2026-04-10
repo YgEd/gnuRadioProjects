@@ -205,7 +205,10 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
 
         # Metrics blocks
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(gain=self.sdr_RF_gain)
+        # Active metrics logger
+        self.metrics_logger.start()
+
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
@@ -215,7 +218,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         )
 
         # packet source
-        self.source = mav_packet_source(metrics_logger=self.metrics_logger)
+        self.source = mav_packet_source(self.center_freq , self.osmosdr_sink, metrics_logger=self.metrics_logger)
 
 
         
@@ -279,10 +282,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # Clean Up Methods
         ####################################
 
-    def closeEvent(self, event):
-        """Handle window close button — same cleanup as SIGINT."""
-        self._safe_shutdown()
-        event.accept()
+    
 
     def _safe_shutdown(self):
         """Zero RF gains and stop the flow graph cleanly."""
@@ -295,6 +295,8 @@ class flow_graph(gr.top_block,Qt.QWidget):
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
+        self.source.stop()
+        self.metrics_logger.close()
         self.stop()
         self.wait()
         print("Flow graph stopped.")

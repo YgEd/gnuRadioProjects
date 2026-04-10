@@ -467,7 +467,7 @@ class SITLManager:
     def _launch_sitl(self):
         cmd = [
             'python3',
-            os.path.expanduser('~/Desktop/ardupilot/Tools/autotest/sim_vehicle.py'),
+            os.path.expanduser('~/ardupilot/Tools/autotest/sim_vehicle.py'),
             '-v', self.sitl_vehicle,
             '--no-rebuild',
             '--out=127.0.0.1:14550',
