@@ -1,47 +1,53 @@
-Total observations: 2521
-Unique conditions: 5
+Total observations: 7512
+Unique conditions: 10
 
 === Per-variable distributions ===
 
 Gain:
-  moderate: 2521 (100.0%)
+  moderate: 7512 (100.0%)
 
 SNR:
-  high: 2521 (100.0%)
+  high: 7512 (100.0%)
 
 ChannelNoise:
-  moderate: 2520 (100.0%)
-  low: 1 (0.0%)
+  moderate: 6004 (79.9%)
+  low: 1497 (19.9%)
+  high: 11 (0.1%)
 
 FreqOffset:
-  low: 2521 (100.0%)
+  low: 7512 (100.0%)
 
 Doppler:
-  low: 2521 (100.0%)
+  low: 7512 (100.0%)
 
 Jitter:
-  low: 2521 (100.0%)
+  low: 7512 (100.0%)
 
 BER:
-  moderate: 2095 (83.1%)
-  low: 426 (16.9%)
+  moderate: 5209 (69.3%)
+  low: 814 (10.8%)
 
 PacketSuccess:
-  failure: 1266 (50.2%)
-  success: 1255 (49.8%)
+  success: 4891 (65.1%)
+  failure: 2621 (34.9%)
 
-=== All observed conditions (5 unique) ===
+=== All observed conditions (10 unique) ===
 
     Gain  SNR ChannelNoise FreqOffset Doppler Jitter      BER PacketSuccess  count
-moderate high     moderate        low     low    low moderate       failure   1249
-moderate high     moderate        low     low    low moderate       success    846
-moderate high     moderate        low     low    low      low       success    408
-moderate high     moderate        low     low    low      low       failure     17
-moderate high          low        low     low    low      low       success      1
+moderate high     moderate        low     low    low moderate       success   2832
+moderate high     moderate        low     low    low moderate       failure   2368
+moderate high     moderate        low     low    low      low       success    554
+moderate high     moderate        low     low    low      low       failure    250
+moderate high         high        low     low    low      low       success      6
+moderate high          low        low     low    low      low       success      4
+moderate high         high        low     low    low moderate       success      4
+moderate high          low        low     low    low moderate       success      2
+moderate high          low        low     low    low moderate       failure      2
+moderate high         high        low     low    low moderate       failure      1
 
 === PacketSuccess by BER (crosstab) ===
 
 PacketSuccess  failure  success
 BER                            
-low                 17      409
-moderate          1249      846
+low                250      564
+moderate          2371     2838

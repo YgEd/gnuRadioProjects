@@ -130,6 +130,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
             gainset = self.setSDRGain(gains[self.gain_index])
             self.time_since_gain_change = time.time()
             print(f'[GNURXBlock] Updated gain to {gainset}db')
+            return gainset
         
 
 
@@ -176,12 +177,12 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         
                         if self.metrics_logger:
                             packet_info =  {
-                                'payload_len':bytearray(self.payload_len),
+                                'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([received_crc]),
-                                'payload_crc':(0),
-                                'raw_payload_bytes':bytearray(0),
-                                'whitened_payload_bytes':bytearray(0),
-                                'raw_packet_bytes':bytearray(0),
+                                'payload_crc':bytearray(0b0),
+                                'raw_payload_bytes':bytearray(0b0),
+                                'whitened_payload_bytes':bytearray(0b0),
+                                'raw_packet_bytes':bytearray(0b0),
                                 'message':f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
                             }
                             self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)

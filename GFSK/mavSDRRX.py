@@ -102,6 +102,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # SDR RF gain
         self.sdr_RF_gain = 30
 
+
     
 
         #######################
@@ -222,7 +223,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         )
        
         # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
-        self.destination = mav_packet_reader_with_metrics(self.center_freq, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
+        self.destination = mav_packet_reader_with_metrics(self.center_freq, setSDRGain=self.setGain, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
 
         ##########################
         # Connections
@@ -270,6 +271,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.stop()
         self.wait()
         print("Flow graph stopped.")
+
+    
 
 
 
