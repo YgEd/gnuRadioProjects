@@ -6,6 +6,7 @@ import csv
 import numpy as np
 from mavGNUTXBlock import sync_word, whiten, crc8, crc16
 from gcsPublisher import GCSPublisher
+import time
 
 # Import your existing helpers from mavGNUBlock
 # (whiten, crc8, crc16, log_packet, sync_word, log_name are defined there)
@@ -29,7 +30,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, freq, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
+    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -55,6 +56,11 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.sitl = None
         self.publish = publish_to_gcs
         self.addr = (host, port)
+
+        # for gain variation
+        self.setSDRGain = setSDRGain
+        self.time_since_gain_change = time.time()
+        self.gain_index = 0
 
         # self.sitl = sitl.SITLManager()
         # print("Attempting to connect to SITL...")
@@ -114,12 +120,25 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
         ber = 1.0 - (1.0 - per) ** (1.0 / self.PACKET_LENGTH_BITS)
         return ber
+    
+    def gainSetter(self):
+        gains = [30.0, 20.0, 15.0, 10.0, 5.0, 3.0, 2.0, 1.0]
+        curr_time = time.time()
+        
+        if  curr_time >= self.time_since_gain_change + 2:
+            self.gain_index = (self.gain_index + 1) % len(gains)
+            gainset = self.setSDRGain(gains[self.gain_index])
+            self.time_since_gain_change = time.time()
+            print(f'[GNURXBlock] Updated gain to {gainset}db')
+        
+
 
 
 
     def work(self, input_items, output_items):
         from mavGNUTXBlock import log_name, whiten, crc8, crc16
 
+        self.gainSetter()
         in_data = input_items[0]
 
         for bit in in_data:

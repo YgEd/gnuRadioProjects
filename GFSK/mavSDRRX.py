@@ -248,6 +248,11 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
     def getGain(self):
         return self.sdr_RF_gain 
+    
+    def setGain(self, gain):
+        self.sdr_RF_gain = gain
+        gainset = self.osmosdr_source.set_gain(gain, 0)
+        return gainset
 
     def _safe_shutdown(self):
         """Zero RF gains and stop the flow graph cleanly."""
