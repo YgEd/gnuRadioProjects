@@ -108,7 +108,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.rx_interpolation=1
         self.rx_decimation=20
         # Fractional bw for TX rational resampler
-        self.fractional_bw=0.5
+        self.fractional_bw=0.49
         # TX gain scalar constant
         self.tx_gain_scalar=1
 
