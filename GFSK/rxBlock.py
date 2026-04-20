@@ -3,7 +3,7 @@ import pmt
 from pymavlink import mavutil
 import csv
 import numpy as np
-from mavGNUTXBlock import sync_word, whiten, crc8, crc16
+from txBlock import sync_word, whiten, crc8, crc16, log_name
 from channel_coding import (
     ViterbiDecoder, BlockInterleaver,
     compute_coded_length, decode_length_field,
@@ -145,7 +145,6 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
 
     def work(self, input_items, output_items):
-        from mavGNUTXBlock import log_name, whiten, crc8, crc16
 
         self.gainSetter()
         in_data = input_items[0]

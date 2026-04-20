@@ -17,6 +17,7 @@ from channel_coding import (
 # construct logging file name
 now = datetime.datetime.now().isoformat()
 log_name = f"packet-log-{now}.csv"
+sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 
 
@@ -66,7 +67,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 
 
 
-sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
+
 
 class mav_packet_source(gr.sync_block):
     def __init__(self, freq, set_bladerf_gain=None, bladerf=None, metrics_logger=None):
