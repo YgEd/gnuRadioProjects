@@ -1,27 +1,22 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
-from PyQt5 import Qt
-from txBlock import mav_packet_source
-from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
 import osmosdr
 import sys
 import sip
 import signal
-import time
-import gc
-import subprocess
+from PyQt5 import Qt
+import numpy as np
+from rxBlock import mav_packet_reader_with_metrics
+from rf_metrics import RFMetricsProbe, MetricsLogger
 
-class flow_graph(gr.top_block,Qt.QWidget):
+
+class flow_graph(gr.top_block, Qt.QWidget):
     def __init__(self):
-
-        ####################################
-        # QT Widget Setup
-        ####################################
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("Ouput TX bassaband")
+        self.setWindowTitle("Ouput RX bandpass")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -47,8 +42,6 @@ class flow_graph(gr.top_block,Qt.QWidget):
                 self.restoreGeometry(geometry)
         except BaseException as exc:
             print(f"Qt GUI: Could not restore geometry: {str(exc)}", file=sys.stderr)
-
-        
 
         ####################################
         # Variables
@@ -100,24 +93,14 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
 
-        # TX interpolation and decimation amounts for rational resampler ratio
-        self.tx_interpolation=20
-        self.tx_decimation=1
-        
-        # RX interpolation and decimation amounts for rational resampler ratio
+        # RX interpolation and decimation ratio for rational resampler
         self.rx_interpolation=1
         self.rx_decimation=20
-        # Fractional bw for TX rational resampler
-        self.fractional_bw=0.49
-        # TX gain scalar constant
+        self.fractional_bw=0.4
         self.tx_gain_scalar=1
 
-        ##########################
-        # BladeRF source variables
-        ##########################
-
-        self.sdr_RF_gain = 35    
-
+        # SDR RF gain
+        self.sdr_RF_gain = 30
 
         # Define your constellation tiers
         constellations = {
@@ -127,84 +110,73 @@ class flow_graph(gr.top_block,Qt.QWidget):
             '16qam':  digital.constellation_16qam().base(),
         }   
 
+
     
 
         #######################
         # Blocks
         #######################
 
-        
-                        
-        # upsample from 100e3 to 2e6 or (2Mhz sampling rate limit for bladerf is 61.44Mhz)
-        self.tx_resampler = filter.rational_resampler_ccf(
-            interpolation=self.tx_interpolation,
-            decimation=self.tx_decimation,
-            taps=[],
-            fractional_bw=self.fractional_bw
+
+       
+
+        # resampler and lowpass all in one
+        self.rx_resampler_lowpass = filter.freq_xlating_fir_filter_ccf(
+            decimation=self.rx_decimation,
+            taps=firdes.low_pass(
+                gain=1,
+                sampling_freq=self.sdr_samp_rate,
+                # to determine cutoff freq you need to compute occupied bandwidth:
+                # occupied_bandwidth ~ symbol_rate * (1 + BT) in this case our with a samp_rate of 100e3 and samples per symbol at 4 and BT at 0.35 we get
+                # occupied_bandwidth ~ 100e3/4 * (1 + 0.35)
+                # Then to get cutoff freq we calculate
+                # cutoff_freq = occupied_bandwidth * 0.75 to 1 (this 0.75 to 1 scalar is a trade off between (next two lines))
+                # 0.75 -> tighter, less noise, but sensitive to freq offset
+                # 1 -> more open, tolerant to some offset
+                # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
+                # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
+                cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
+                # transition width rule of thumb is
+                # transition width ~ cutoff_freq * 0.25
+                transition_width=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1 * 0.25
+            ),
+            center_freq=0, #leave at 0 by default this is a constant offset if you know consistent tx rx freq offset
+            sampling_freq=self.sdr_samp_rate
         )
-        
-        # how much you are scaling power form sdr 0.25 is good for bench testing, 0.5 half power good more realistic testing, 1 is max power may cause clipping
-        self.tx_gain = blocks.multiply_const_cc(self.tx_gain_scalar) 
 
         # generic demod
+
         self.demod = digital.generic_demod(
             constellation=constellations['qpsk'],
             differential=True,
             samples_per_symbol=4,
             pre_diff_code=True,
             excess_bw=0.35,
-            freq_bw=6.28/100,        # frequency tracking loop BW
-            timing_bw=6.28/100,      # timing recovery loop BW
-            phase_bw=6.28/100,       # phase tracking loop BW
+            freq_bw=6.28/100,
+            timing_bw=6.8/100,
+            phase_bw=6.8/100,
             verbose=False,
             log=False
         )
         
-        # osmos sink
-        self.osmosdr_sink = osmosdr.sink(
-            args="numchan=" + str(1) + " " + "bladeRF=0"
-        )
-        self.osmosdr_sink.set_sample_rate(self.sdr_samp_rate)
-        self.osmosdr_sink.set_center_freq(self.center_freq, 0)
-        self.osmosdr_sink.set_antenna('TX1', 0) # set antenna earlier so that the gain settings apply to that antenna
-        self.osmosdr_sink.set_freq_corr(0, 0)
-        self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)        # TX gain - start low
-        self.osmosdr_sink.set_if_gain(15, 0)
-        self.osmosdr_sink.set_bb_gain(15, 0)
-        self.osmosdr_sink.set_bandwidth(0, 0)
 
-        # print(f"For TX 2")
-        # print(self.osmosdr_sink.get_gain("dsa", 0))
-        # print(self.osmosdr_sink.get_gain("system", 0))
+        # agc for rx
+        # self.agc = analog.agc_cc(
+        #     rate=1e-4,       # adaptation rate — how fast AGC adjusts Higher values (1e-2 to 1e-3) get fast adaption but fluctuates iwth noise. Lower values (1e-4 to 1e-5) slow adaption but stable gain during packet
+        #     reference=1.0,   # target output amplitude
+        #     gain=1.0         # initial gain estimate
+        # )
 
-        self.qt_freq_sink = qtgui.freq_sink_c(
-            1024,                # FFT size
-            5,  # window type 5 == blackman harris
-            self.center_freq,    # center freq for display
-            self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
-            "TX Monitor"
+        # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
+        self.agc = analog.agc2_cc(
+            attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
+            decay_rate=1e-3,    # how fast gain INCREASES (signal weakens/disappears)
+            reference=1.0,
+            gain=1.0
         )
 
-        self.qt_freq_sink.set_update_time(0.10)
-        self.qt_freq_sink.set_y_axis(-140, 10)
-
-        self.qt_time_sink = qtgui.time_sink_c(
-            1024,               # number of points
-            self.sdr_samp_rate, # sample rate
-            "TX Time Domain"
-        )
-
-        # Adding gui sinks to gui
-    
-        self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
-
-        self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
-
-        # Add to your __init__ after your existing blocks:
-
-        # === Loopback debug chain ===
+        
+        # gfsk demod
         self.gfsk_demod = digital.gfsk_demod(
             samples_per_symbol=self.samples_per_symbol,
             sensitivity=self.sensitivity,
@@ -213,16 +185,58 @@ class flow_graph(gr.top_block,Qt.QWidget):
             omega_relative_limit=self.omega_relative_limit,
             freq_error=self.freq_error,
             verbose=False,
-            log=False
+            log=False)
+        
+        # osmos bladerf souce block
+        self.osmosdr_source = osmosdr.source(
+            args="numchan=" + str(1) + " " + "bladeRF=0"
         )
+        self.osmosdr_source.set_time_unknown_pps(osmosdr.time_spec_t())
+        self.osmosdr_source.set_sample_rate(self.sdr_samp_rate)
+        self.osmosdr_source.set_center_freq(self.center_freq, 0)
+        self.osmosdr_source.set_antenna('RX1', 0) # set RX antenna earlier to ensure gain is applied to correct port
+        self.osmosdr_source.set_freq_corr(0, 0)
+        self.osmosdr_source.set_dc_offset_mode(0, 0)
+        self.osmosdr_source.set_iq_balance_mode(0, 0)
+        self.osmosdr_source.set_gain_mode(False, 0)
+        self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
+        self.osmosdr_source.set_if_gain(10, 0)
+        self.osmosdr_source.set_bb_gain(16, 0)
+        self.osmosdr_source.set_bandwidth(0,0)
 
+        # self.qt_freq_sink = qtgui.freq_sink_c(
+        #     1024,                # FFT size
+        #     5,  # window type 5 == blackman harris
+        #     self.center_freq,    # center freq for display
+        #     self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
+        #     "RX Monitor"
+        # )
 
+        # self.qt_time_sink = qtgui.time_sink_c(
+        #     1024,               # number of points
+        #     self.samp_rate, # sample rate
+        #     "RX Time Domain"
+        # )
 
-        # Metrics blocks
-        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
-        # Active metrics logger
+        # Adding gui sinks to gui
+
+        # Create the FFT sink
+        self.fft_sink = qtgui.freq_sink_c(
+            1024,              # FFT size
+            5,  # Window type
+            self.center_freq,       # Center frequency (e.g., 915e6)
+            self.sdr_samp_rate,         # Sample rate at this point in the chain
+            "OTA Signal"       # Label
+        )
+        self.fft_sink.set_update_time(0.10)  # Update every 100ms
+        self.fft_sink.set_y_axis(-140, 10)  # dB range
+
+        # Get the Qt widget (needed to actually display it)
+        self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
+        self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
+    
+        self.metrics_logger = MetricsLogger(getGain=self.getGain)
         self.metrics_logger.start()
-
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
@@ -230,113 +244,64 @@ class flow_graph(gr.top_block,Qt.QWidget):
             logger=self.metrics_logger,
             sensitivity=self.sensitivity
         )
+       
+        # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
+        self.destination = mav_packet_reader_with_metrics(self.center_freq, setSDRGain=self.setGain, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
 
-        # packet source
-        self.source = mav_packet_source(self.center_freq , self.setSDRGain, self.osmosdr_sink, metrics_logger=self.metrics_logger)
-
-
-        
         ##########################
         # Connections
         #########################
 
-        self.connect(self.source, self.demod)
-        self.connect(self.demod, self.tx_gain)
-        self.connect(self.tx_resampler, self.qt_freq_sink)
-        self.connect(self.tx_gain, self.qt_time_sink)
-        self.connect(self.tx_gain, self.tx_resampler)
-        self.connect(self.tx_resampler, self.osmosdr_sink)
-        self.connect(self.tx_resampler, self.metrics_probe)
+        # gui snks
+        # self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
+        # self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        self.connect(self.osmosdr_source, self.fft_sink)
 
-        # Connect loopback — tap off after GFSK mod
-        # Just for debug perposes
-        # self.connect(self.gfsk_mod, self.gfsk_demod)
-        # self.connect(self.gfsk_demod, self.debug_sink)
+        self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
+        self.connect(self.rx_resampler_lowpass, self.agc)
+        self.connect(self.agc, self.demod)
+        self.connect(self.demod, self.destination)
+        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
+        # self.connect(self.gfsk_demod, self.destination)
 
-    # def cli_thread(packet_source):
-    #     mav = mavlink2.MAVLink(None)
-    #     mav.srcSystem = 255
-    #     mav.srcComponent = 1
-        
-    #     transmitting = True
-        
-    #     def input_listener():
-    #         nonlocal transmitting
-    #         while True:
-    #             try:
-    #                 cmd = input("Enter command (start/stop/arm/guided/quit): ")
-    #             except (KeyboardInterrupt, EOFError):
-    #                 print("\nProgram Killed")
-    #                 Qt.QApplication.quit()
-    #                 return
-                
-    #             if cmd == 'stop':
-    #                 transmitting = False
-    #                 print("[CLI] Transmission stopped")
-    #             elif cmd == 'start':
-    #                 transmitting = True
-    #                 print("[CLI] Transmission started")
-    #             elif cmd == 'arm':
-    #                 msg = mav.command_long_encode(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)
-    #                 packet_source.send_message(msg.pack(mav), True)
-    #                 print("[CLI] Arm command sent")
-    #             elif cmd == 'guided':
-    #                 msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
-    #                 packet_source.send_message(msg.pack(mav), True)
-    #                 print("[CLI] Guided command sent")
-    #             elif cmd == 'quit':
-    #                 transmitting = False
-    #                 Qt.QApplication.quit()
-    #                 return
 
-    #     listener = threading.Thread(target=input_listener, daemon=True)
-    #     listener.start()
+    def closeEvent(self, event):
+        """Handle window close button — same cleanup as SIGINT."""
+        self._safe_shutdown()
+        event.accept()
 
-        ####################################
-        # Clean Up Methods
-        ####################################
-
+    def getGain(self):
+        return self.sdr_RF_gain 
     
+    def setGain(self, gain):
+        self.sdr_RF_gain = gain
+        gainset = self.osmosdr_source.set_gain(gain, 0)
+        return gainset
 
     def _safe_shutdown(self):
-        """Fully stop BladeRF transmission and close the device."""
+        """Zero RF gains and stop the flow graph cleanly."""
         print("Shutting down BladeRF TX...")
         try:
-            gain = self.osmosdr_sink.set_gain(0, 0)
-            self.osmosdr_sink.set_if_gain(0, 0)
-            self.osmosdr_sink.set_bb_gain(0, 0)
-            self.osmosdr_sink.set_center_freq(2.4e9, 0)
+            # Kill RF output before stopping the scheduler
+            self.osmosdr_source.set_gain(0, 0)
+            self.osmosdr_source.set_if_gain(0, 0)
+            self.osmosdr_source.set_bb_gain(0, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
-
-        # Stop the flow graph FIRST so the sink stops pulling samples
-        self.source.stop()
+        
         self.metrics_logger.close()
+
         self.stop()
         self.wait()
-
-        # Now close the actual device handle
-        try:
-            del self.osmosdr_sink
-            self.osmosdr_sink = None
-            gc.collect()
-        except Exception as e:
-            print(f"Warning: could not release sink: {e}", file=sys.stderr)
-
-        print("Flow graph stopped and device released.")
-    
-    # Method to update gain so it is accurately reflected in the logs
-    def setSDRGain(self, gain):
-        self.sdr_RF_gain = gain
-        print(f'[mavSDRTX] Gain updated to {self.sdr_RF_gain}')
-
-    def getSDRgain(self):
-        return self.sdr_RF_gain
+        print("Flow graph stopped.")
 
     
-    
+
+
+
 if __name__ == '__main__':
     app = Qt.QApplication(sys.argv)
+
     tb = flow_graph()
     tb.show()
     app.processEvents()
@@ -346,11 +311,15 @@ if __name__ == '__main__':
         tb._safe_shutdown()
         Qt.QApplication.quit()
 
+
+    def noop():
+        pass
+
     signal.signal(signal.SIGINT, sig_handler)
 
     timer = Qt.QTimer()
     timer.start(500)
-    timer.timeout.connect(lambda: None)
+    timer.timeout.connect(noop)
 
     tb.start()
 
