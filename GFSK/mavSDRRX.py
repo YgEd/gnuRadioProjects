@@ -8,7 +8,7 @@ import sip
 import signal
 from PyQt5 import Qt
 import numpy as np
-from mavrxtest import mav_packet_reader_with_metrics
+from rxBlock import mav_packet_reader_with_metrics
 from rf_metrics import RFMetricsProbe, MetricsLogger
 
 

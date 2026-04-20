@@ -1,7 +1,7 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
-from mavtxtest import mav_packet_source
+from txBlock import mav_packet_source
 from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
