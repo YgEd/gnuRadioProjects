@@ -72,7 +72,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
         # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
         # High value like 1 induces minimal smoothing, sharp transitions leading to wide bandwidth occupancy with little intersymbol interference
-        self.bt = 0.35
+        self.bt = 0.5
 
         # gain_mu is timing recovery loop gain, how aggresively the clock recovery algorithm corrects its estimate. 
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery

@@ -44,7 +44,7 @@ def whiten(data, seed=0x1FF):
 def crc8(data, poly=0x07, init=0x00):
     crc = init
     for byte in data:
-        crc ^= byte
+        crc ^= int(byte)
         for _ in range(8):
             if crc & 0x80:
                 crc = ((crc << 1) ^ poly) & 0xFF
@@ -55,7 +55,7 @@ def crc8(data, poly=0x07, init=0x00):
 def crc16(data, poly =0x8005, init=0xFFFF):
     crc = init
     for byte in data:
-        crc ^= byte << 8
+        crc ^= int(byte) << 8
         for _ in range(8):
             if crc & 0x8000:
                 crc = ((crc << 1) ^ poly) & 0xFFFF
