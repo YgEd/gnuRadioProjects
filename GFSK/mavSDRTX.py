@@ -74,7 +74,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # h is you modulation index
         # sensitivity of 1 means you have a modulation index of 1.27 which is very high
         # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
-        self.sensitivity = 0.4
+        self.sensitivity = 0.785
 
         # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
         # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
@@ -108,7 +108,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.rx_interpolation=1
         self.rx_decimation=20
         # Fractional bw for TX rational resampler
-        self.fractional_bw=0.4
+        self.fractional_bw=0.5
         # TX gain scalar constant
         self.tx_gain_scalar=1
 

@@ -67,7 +67,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # h is you modulation index
         # sensitivity of 1 means you have a modulation index of 1.27 which is very high
         # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
-        self.sensitivity = 0.4
+        self.sensitivity = 0.785
 
         # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
         # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
@@ -147,7 +147,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
             attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
-            decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)
+            decay_rate=1e-3,    # how fast gain INCREASES (signal weakens/disappears)
             reference=1.0,
             gain=1.0
         )
