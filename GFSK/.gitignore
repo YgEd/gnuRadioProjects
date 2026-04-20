@@ -9,3 +9,5 @@
 *.parm
 *.pyc
 ./__pycache__/*
+*.env
+*.db*

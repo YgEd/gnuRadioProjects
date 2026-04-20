@@ -6,6 +6,7 @@ import csv
 import numpy as np
 from mavGNUTXBlock import sync_word, whiten, crc8, crc16
 from gcsPublisher import GCSPublisher
+import time
 
 # Import your existing helpers from mavGNUBlock
 # (whiten, crc8, crc16, log_packet, sync_word, log_name are defined there)
@@ -29,7 +30,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
+    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -48,12 +49,18 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.sync_word    = sync_word
         self.sync_len     = len(sync_word)
         self.state        = 'SEARCHING'
+        self.freq = freq
         self.bit_buffer   = []
         self.payload_len  = 0
         self._stopped = False
         self.sitl = None
         self.publish = publish_to_gcs
         self.addr = (host, port)
+
+        # for gain variation
+        self.setSDRGain = setSDRGain
+        self.time_since_gain_change = time.time()
+        self.gain_index = 0
 
         # self.sitl = sitl.SITLManager()
         # print("Attempting to connect to SITL...")
@@ -113,12 +120,26 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
         ber = 1.0 - (1.0 - per) ** (1.0 / self.PACKET_LENGTH_BITS)
         return ber
+    
+    def gainSetter(self):
+        gains = [30.0, 20.0, 15.0, 10.0, 5.0, 3.0, 2.0, 1.0]
+        curr_time = time.time()
+        
+        if  curr_time >= self.time_since_gain_change + 2:
+            self.gain_index = (self.gain_index + 1) % len(gains)
+            gainset = self.setSDRGain(gains[self.gain_index])
+            self.time_since_gain_change = time.time()
+            print(f'[GNURXBlock] Updated gain to {gainset}db')
+            return gainset
+        
+
 
 
 
     def work(self, input_items, output_items):
         from mavGNUTXBlock import log_name, whiten, crc8, crc16
 
+        self.gainSetter()
         in_data = input_items[0]
 
         for bit in in_data:
@@ -128,7 +149,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                 if len(self.bit_buffer) >= self.sync_len:
                     tail = self.bit_buffer[-self.sync_len:]
                     if np.array_equal(tail, self.sync_word):
-                        print("Sync word found!")
+                        print("[GNURXBlock] sync word found!")
                         self.bit_buffer   = []
                         self.state        = 'READ_LENGTH'
                         self.constructed_bits = list(self.sync_word)
@@ -156,15 +177,15 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         
                         if self.metrics_logger:
                             packet_info =  {
-                                'payload_len':bytearray(self.payload_len),
+                                'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([received_crc]),
-                                'payload_crc':bytearray(),
-                                'raw_payload_bytes':bytearray(),
-                                'whitened_payload_bytes':bytearray(),
-                                'packet_bytes':bytearray(),
+                                'payload_crc':bytearray(0b0),
+                                'raw_payload_bytes':bytearray(0b0),
+                                'whitened_payload_bytes':bytearray(0b0),
+                                'raw_packet_bytes':bytearray(0b0),
                                 'message':f'Length CRC Failed: got {received_crc:#x} expected {expected_crc:#x}'
                             }
-                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
+                            self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
@@ -205,10 +226,10 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([crc8(self.length_bytes)]),
                                 'payload_crc':bytearray(received_crc_bytes),
-                                'packet_bytes':packet_bytes,
+                                'raw_packet_bytes':packet_bytes,
                                 'message':f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
                             }
-                            self.metrics_logger.log_packet_outcome(packet_info, success=False, ber=ber)
+                            self.metrics_logger.log_packet_outcome('RX', self.freq, packet_info, success=False, ber=ber)
 
                         self.bit_buffer     = []
                         self.constructed_bits = []
@@ -233,10 +254,10 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_len':self.payload_len,
                                 'payload_len_crc':bytearray([crc8(self.length_bytes)]),
                                 'payload_crc':bytearray(received_crc_bytes),
-                                'packet_bytes':packet_bytes,
+                                'raw_packet_bytes':packet_bytes,
                                 'message':msg
                             }
-                        self.metrics_logger.log_packet_outcome(packet_info, success=True, ber=ber)
+                        self.metrics_logger.log_packet_outcome('RX', self.freq ,packet_info, success=True, ber=ber)
                         if self.publish:
                             try:
                                 # publish mavlink message to port 8080 for gcs

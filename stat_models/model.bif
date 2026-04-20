@@ -1,0 +1,56 @@
+network unknown {
+}
+variable BER {
+    type discrete [ 3 ] { acceptable, excellent, poor };
+}
+variable ChannelNoise {
+    type discrete [ 2 ] { low, moderate };
+}
+variable Doppler {
+    type discrete [ 1 ] { negligible };
+}
+variable FreqOffset {
+    type discrete [ 1 ] { low };
+}
+variable Gain {
+    type discrete [ 1 ] { 30 };
+}
+variable Jitter {
+    type discrete [ 1 ] { low };
+}
+variable PacketSuccess {
+    type discrete [ 2 ] { failure, success };
+}
+variable SNR {
+    type discrete [ 1 ] { good };
+}
+probability ( BER | Doppler, FreqOffset, Jitter, SNR ) {
+    ( negligible, low, low, good ) 0.8300343098442862, 0.16336764317761945, 0.006598046978094485;
+
+}
+probability ( ChannelNoise ) {
+    table 0.0013855898653998416, 0.9986144101346002 ;
+}
+probability ( Doppler ) {
+    table 1.0 ;
+}
+probability ( FreqOffset ) {
+    table 1.0 ;
+}
+probability ( Gain ) {
+    table 1.0 ;
+}
+probability ( Jitter ) {
+    table 1.0 ;
+}
+probability ( PacketSuccess | BER ) {
+    ( acceptable ) 0.5961049284578697, 0.4038950715421304;
+    ( excellent ) 0.006865912762520195, 0.9931340872374799;
+    ( poor ) 0.95, 0.049999999999999996;
+
+}
+probability ( SNR | ChannelNoise, Gain ) {
+    ( low, 30 ) 1.0;
+    ( moderate, 30 ) 1.0;
+
+}

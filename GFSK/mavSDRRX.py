@@ -8,7 +8,7 @@ import sip
 import signal
 from PyQt5 import Qt
 import numpy as np
-from mavGNURXBlock import mav_packet_reader_with_metrics
+from mavrxtest import mav_packet_reader_with_metrics
 from rf_metrics import RFMetricsProbe, MetricsLogger
 
 
@@ -67,18 +67,18 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # h is you modulation index
         # sensitivity of 1 means you have a modulation index of 1.27 which is very high
         # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
-        self.sensitivity = 0.4
+        self.sensitivity = 0.785
 
         # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
         # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
         # High value like 1 induces minimal smoothing, sharp transitions leading to wide bandwidth occupancy with little intersymbol interference
-        self.bt = 0.35
+        self.bt = 0.5
 
         # gain_mu is timing recovery loop gain, how aggresively the clock recovery algorithm corrects its estimate. 
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
         # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
         # kind of like PID tuning?
-        self.gain_mu = 0.25
+        self.gain_mu = 0.08
 
         # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
         # 0.5 means you start sampling within the middle of a period
@@ -101,6 +101,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         # SDR RF gain
         self.sdr_RF_gain = 30
+
 
     
 
@@ -146,7 +147,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
         self.agc = analog.agc2_cc(
             attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
-            decay_rate=1e-4,    # how fast gain INCREASES (signal weakens/disappears)
+            decay_rate=1e-3,    # how fast gain INCREASES (signal weakens/disappears)
             reference=1.0,
             gain=1.0
         )
@@ -211,7 +212,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
     
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(getGain=self.getGain)
+        self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
@@ -221,7 +223,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         )
        
         # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
-        self.destination = mav_packet_reader_with_metrics(metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
+        self.destination = mav_packet_reader_with_metrics(self.center_freq, setSDRGain=self.setGain, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
 
         ##########################
         # Connections
@@ -245,6 +247,14 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self._safe_shutdown()
         event.accept()
 
+    def getGain(self):
+        return self.sdr_RF_gain 
+    
+    def setGain(self, gain):
+        self.sdr_RF_gain = gain
+        gainset = self.osmosdr_source.set_gain(gain, 0)
+        return gainset
+
     def _safe_shutdown(self):
         """Zero RF gains and stop the flow graph cleanly."""
         print("Shutting down BladeRF TX...")
@@ -255,10 +265,14 @@ class flow_graph(gr.top_block, Qt.QWidget):
             self.osmosdr_source.set_bb_gain(0, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
+        
+        self.metrics_logger.close()
 
         self.stop()
         self.wait()
         print("Flow graph stopped.")
+
+    
 
 
 

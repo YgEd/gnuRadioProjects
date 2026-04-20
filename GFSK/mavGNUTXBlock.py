@@ -39,7 +39,7 @@ def whiten(data, seed=0x1FF):
 def crc8(data, poly=0x07, init=0x00):
     crc = init
     for byte in data:
-        crc ^= byte
+        crc ^= int(byte)
         for _ in range(8):
             if crc & 0x80:
                 crc = ((crc << 1) ^ poly) & 0xFF
@@ -50,7 +50,7 @@ def crc8(data, poly=0x07, init=0x00):
 def crc16(data, poly =0x8005, init=0xFFFF):
     crc = init
     for byte in data:
-        crc ^= byte << 8
+        crc ^= int(byte) << 8
         for _ in range(8):
             if crc & 0x8000:
                 crc = ((crc << 1) ^ poly) & 0xFFFF
@@ -64,7 +64,7 @@ def crc16(data, poly =0x8005, init=0xFFFF):
 sync_word = np.unpackbits(np.array([0x02, 0xb8, 0xdb], dtype=np.uint8)).tolist()
 
 class mav_packet_source(gr.sync_block):
-    def __init__(self, metrics_logger=None):
+    def __init__(self, freq, set_bladerf_gain=None, bladerf=None, metrics_logger=None):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Source",
@@ -80,7 +80,7 @@ class mav_packet_source(gr.sync_block):
         # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
         self.sync_word = sync_word
         # Define postamble: at least 4 bytes / 32 bits
-
+        self.freq = freq
         self.packet_queue = []
 
         # mavlink stuff
@@ -92,6 +92,9 @@ class mav_packet_source(gr.sync_block):
         # logger
         self.metrics_logger = metrics_logger
 
+        # reference to sdr to vary gain
+        self.bladerf = bladerf
+
 
         # attempt to connect to sitl
         self.sitl = sitl.SITLManager()
@@ -99,7 +102,10 @@ class mav_packet_source(gr.sync_block):
         self.sitl.start()
         self._time_since_telem = int(time.time())
         self._time_since_gps = int(time.time())
+        self._time_since_gain_change = int(time.time())
 
+        self._gain_index = 0
+        self.set_bladerf_gain = set_bladerf_gain
 
 
     
@@ -169,6 +175,8 @@ class mav_packet_source(gr.sync_block):
         if raw:
             print(f"mavlink packet in byte form: {[int(b) for b in message]}")
             pass
+
+        print(f"[DEBUG] sent message bytes: {list(message)}")
       
         whitened_msg = whiten(message)
         # print(f"whitened message {whitened_msg}, whiten function ran again: {whiten(whitened_msg)}")
@@ -186,18 +194,19 @@ class mav_packet_source(gr.sync_block):
         except Exception as e:
             print(f"[GNUTXBlock] Error when converting payload bytes to mavlink string: {e}")
 
+
         packet_info = {
             'raw_payload_bytes':bytearray(message),
             'whitened_payload_bytes':whitened_msg,
             'payload_len':len(message),
             'payload_len_crc':bytearray([len_crc_byte]),
             'payload_crc':bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
-            'packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
+            'raw_packet_bytes':bytearray(np.packbits(packet_for_log).tolist()),
             'message':msg
         }
 
         if self.metrics_logger is not None:
-            self.metrics_logger.log_packet_outcome(packet_info, success=True, ber='N/A')
+            self.metrics_logger.log_packet_outcome('TX', self.freq, packet_info, success=True, ber='N/A')
         
         self.packet_queue.extend(packet)
 
@@ -229,8 +238,22 @@ class mav_packet_source(gr.sync_block):
                 print(f"[mavGNUTX] Sending {msg.get_type()} Message")
                 self.send_message(msg.pack(self._mav))
                 self._time_since_telem = int(time.time())
+    
         
-        
+    
+    def setGain(self, curr_time):
+        gain_set = None
+        gains = [30.0, 20.0, 15.0, 10.0, 5.0, 3.0, 2.0, 1.0]
+        if curr_time >= self._time_since_gain_change + 120:
+            self._gain_index = (self._gain_index + 1) % len(gains)
+            gain_set = self.bladerf.set_gain(gains[self._gain_index],0)
+            self._time_since_gain_change = int(time.time())
+
+            # update parents gain value so it is logged correctly
+            self.set_bladerf_gain(gain_set)
+        else:
+            gain_set = None
+        return gain_set
 
         
 
@@ -239,11 +262,16 @@ class mav_packet_source(gr.sync_block):
     def work(self, input_items, output_items):
         out = output_items[0]
         n_requested = len(out)
+        
 
         if self.sitl is not None:
             msg = self.sitl.get_mavlink_msg()
             if msg is not None:
                 
+                # update gain amount
+                gain_set = self.setGain(int(time.time()))
+                if gain_set is not None:
+                    print(f'[mavGNUTX] Gain updated to {gain_set}')
                 # only send messages at set frequencies based on their type
                 self.sendGuard(msg, int(time.time()))
                 

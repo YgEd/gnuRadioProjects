@@ -1,7 +1,7 @@
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
-from mavGNUTXBlock import mav_packet_source
+from mavtxtest import mav_packet_source
 from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
@@ -10,6 +10,8 @@ import sys
 import sip
 import signal
 import time
+import gc
+import subprocess
 
 class flow_graph(gr.top_block,Qt.QWidget):
     def __init__(self):
@@ -72,18 +74,18 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # h is you modulation index
         # sensitivity of 1 means you have a modulation index of 1.27 which is very high
         # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
-        self.sensitivity = 0.4
+        self.sensitivity = 0.785
 
         # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
         # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
         # High value like 1 induces minimal smoothing, sharp transitions leading to wide bandwidth occupancy with little intersymbol interference
-        self.bt = 0.35
+        self.bt = 0.5
 
         # gain_mu is timing recovery loop gain, how aggresively the clock recovery algorithm corrects its estimate. 
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
         # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
         # kind of like PID tuning?
-        self.gain_mu = 0.175 
+        self.gain_mu = 0.08
 
         # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
         # 0.5 means you start sampling within the middle of a period
@@ -106,7 +108,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.rx_interpolation=1
         self.rx_decimation=20
         # Fractional bw for TX rational resampler
-        self.fractional_bw=0.4
+        self.fractional_bw=0.49
         # TX gain scalar constant
         self.tx_gain_scalar=1
 
@@ -205,7 +207,10 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
 
         # Metrics blocks
-        self.metrics_logger = MetricsLogger()
+        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
+        # Active metrics logger
+        self.metrics_logger.start()
+
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
             samples_per_symbol=self.samples_per_symbol,
@@ -215,7 +220,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
         )
 
         # packet source
-        self.source = mav_packet_source(metrics_logger=self.metrics_logger)
+        self.source = mav_packet_source(self.center_freq , self.setSDRGain, self.osmosdr_sink, metrics_logger=self.metrics_logger)
 
 
         
@@ -279,25 +284,43 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # Clean Up Methods
         ####################################
 
-    def closeEvent(self, event):
-        """Handle window close button — same cleanup as SIGINT."""
-        self._safe_shutdown()
-        event.accept()
+    
 
     def _safe_shutdown(self):
-        """Zero RF gains and stop the flow graph cleanly."""
+        """Fully stop BladeRF transmission and close the device."""
         print("Shutting down BladeRF TX...")
         try:
-            # Kill RF output before stopping the scheduler
-            self.osmosdr_sink.set_gain(0, 0)
+            gain = self.osmosdr_sink.set_gain(0, 0)
             self.osmosdr_sink.set_if_gain(0, 0)
             self.osmosdr_sink.set_bb_gain(0, 0)
+            self.osmosdr_sink.set_center_freq(2.4e9, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
+        # Stop the flow graph FIRST so the sink stops pulling samples
+        self.source.stop()
+        self.metrics_logger.close()
         self.stop()
         self.wait()
-        print("Flow graph stopped.")
+
+        # Now close the actual device handle
+        try:
+            del self.osmosdr_sink
+            self.osmosdr_sink = None
+            gc.collect()
+        except Exception as e:
+            print(f"Warning: could not release sink: {e}", file=sys.stderr)
+
+        print("Flow graph stopped and device released.")
+    
+    # Method to update gain so it is accurately reflected in the logs
+    def setSDRGain(self, gain):
+        self.sdr_RF_gain = gain
+        print(f'[mavSDRTX] Gain updated to {self.sdr_RF_gain}')
+
+    def getSDRgain(self):
+        return self.sdr_RF_gain
+
     
     
 if __name__ == '__main__':
