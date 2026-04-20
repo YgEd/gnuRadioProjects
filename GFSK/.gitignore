@@ -1,6 +1,6 @@
 *.dat
 *.csv
-*.tlog
+*.tlog*
 *.raw
 *.grc
 *.DAT 
