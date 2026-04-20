@@ -78,7 +78,7 @@ class flow_graph(gr.top_block, Qt.QWidget):
         # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
         # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
         # kind of like PID tuning?
-        self.gain_mu = 0.25
+        self.gain_mu = 0.08
 
         # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
         # 0.5 means you start sampling within the middle of a period

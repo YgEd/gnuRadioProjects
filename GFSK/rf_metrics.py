@@ -415,10 +415,11 @@ class RFMetricsProbe(gr.sync_block):
         signal_bw_hz = np.ceil(symbol_rate * 2 * h)
         sig_mask  = np.abs(freqs) <= (signal_bw_hz / 2)
 
-        # Noise region: outside signal BW but inside filter passband
-        # Your lowpass cutoff is ~(100e3/4)*(1+0.35) ≈ 33.75 kHz
-        # Use 35–50 kHz region as noise reference
-        noise_mask = (np.abs(freqs) > 35e3) & (np.abs(freqs) <= 50e3)
+        # Signal occupies roughly ±13 kHz (with corrected h)
+        # LPF passband is flat to ~37.5 kHz
+        # So 20-30 kHz is flat passband noise, well outside the signal
+        noise_mask = (np.abs(freqs) > 20e3) & (np.abs(freqs) <= 30e3)
+        
 
         if noise_mask.sum() == 0 or sig_mask.sum() == 0:
             return None, None
@@ -429,7 +430,7 @@ class RFMetricsProbe(gr.sync_block):
         if p_noise <= 0 or p_signal <= 0:
             return None, None
 
-        snr_db = 10 * np.log10(p_signal / p_noise)
+        snr_db = 10 * np.log10((p_signal - p_noise) / p_noise)
 
         # Noise floor in dBm — assumes 50 ohm, BladeRF normalized samples
         # This gives relative dBm; for absolute you'd need the gain chain offset
