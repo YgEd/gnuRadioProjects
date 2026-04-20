@@ -262,9 +262,9 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
-        self.connect(self.agc, self.unpacker)
-        self.connect(self.unpacker, self.demod)
-        self.connect(self.demod, self.destination)
+        self.connect(self.agc, self.demod)
+        self.connect(self.demod, self.unpacker)
+        self.connect(self.unpacker, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         # self.connect(self.gfsk_demod, self.destination)
 
