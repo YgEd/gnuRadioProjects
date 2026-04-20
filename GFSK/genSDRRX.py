@@ -175,6 +175,9 @@ class flow_graph(gr.top_block, Qt.QWidget):
             gain=1.0
         )
 
+        # generic demod outputs packed bits, but rxBlock expects unpacked
+        self.unpacker = blocks.packed_to_unpacked_bb(1, gr.GR_MSB_FIRST)
+
         
         # gfsk demod
         self.gfsk_demod = digital.gfsk_demod(
@@ -259,7 +262,8 @@ class flow_graph(gr.top_block, Qt.QWidget):
 
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
-        self.connect(self.agc, self.demod)
+        self.connect(self.agc, self.unpacker)
+        self.connect(self.unpacker, self.demod)
         self.connect(self.demod, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         # self.connect(self.gfsk_demod, self.destination)

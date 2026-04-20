@@ -146,7 +146,9 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # how much you are scaling power form sdr 0.25 is good for bench testing, 0.5 half power good more realistic testing, 1 is max power may cause clipping
         self.tx_gain = blocks.multiply_const_cc(self.tx_gain_scalar) 
 
-   
+    
+        # gneric mod expects packed bits, but txBlock gives it unpacked bits
+        self.packer = blocks.unpacked_to_packed_bb(1, gr.GR_MSB_FIRST)
 
         # Single modulator — swap constellation to change scheme
         self.mod = digital.generic_mod(
@@ -203,19 +205,6 @@ class flow_graph(gr.top_block,Qt.QWidget):
 
         # Add to your __init__ after your existing blocks:
 
-        # === Loopback debug chain ===
-        self.gfsk_demod = digital.gfsk_demod(
-            samples_per_symbol=self.samples_per_symbol,
-            sensitivity=self.sensitivity,
-            gain_mu=self.gain_mu,
-            mu=self.mu,
-            omega_relative_limit=self.omega_relative_limit,
-            freq_error=self.freq_error,
-            verbose=False,
-            log=False
-        )
-
-
 
         # Metrics blocks
         self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
@@ -239,7 +228,8 @@ class flow_graph(gr.top_block,Qt.QWidget):
         # Connections
         #########################
 
-        self.connect(self.source, self.mod)
+        self.connect(self.source, self.packer)
+        self.connect(self.packer, self.mod)
         self.connect(self.mod, self.tx_gain)
         self.connect(self.tx_resampler, self.qt_freq_sink)
         self.connect(self.tx_gain, self.qt_time_sink)
