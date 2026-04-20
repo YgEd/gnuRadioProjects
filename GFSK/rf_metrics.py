@@ -430,7 +430,15 @@ class RFMetricsProbe(gr.sync_block):
         if p_noise <= 0 or p_signal <= 0:
             return None, None
 
-        snr_db = 10 * np.log10((p_signal - p_noise) / p_noise)
+        snr_db = None
+
+        try:
+            snr_db = 10 * np.log10((p_signal - p_noise) / p_noise)
+        except Exception as e:
+            pass
+
+        if snr_db is None:
+            pass
 
         # Noise floor in dBm — assumes 50 ohm, BladeRF normalized samples
         # This gives relative dBm; for absolute you'd need the gain chain offset
