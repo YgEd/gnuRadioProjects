@@ -152,9 +152,9 @@ class flow_graph(gr.top_block, Qt.QWidget):
             samples_per_symbol=4,
             pre_diff_code=True,
             excess_bw=0.35,
-            freq_bw=6.28/100,
-            timing_bw=6.8/100,
-            phase_bw=6.8/100,
+            freq_bw=6.28/50,
+            timing_bw=6.8/50,
+            phase_bw=6.8/50,
             verbose=False,
             log=False
         )

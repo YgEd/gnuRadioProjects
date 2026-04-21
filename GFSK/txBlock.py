@@ -81,7 +81,7 @@ class mav_packet_source(gr.sync_block):
 
         # potentially self.preamble = [0x55] * 6          # 6 bytes timing recovery self.sync_word = [0xD3, 0x91]       # 2 byte sync word
         # Define preamble: at least 4 bytes / 32 bits
-        self.preamble = np.unpackbits(np.array([37,85,85,85,85,85], dtype=np.uint8)).tolist()
+        self.preamble = np.unpackbits(np.array([0x55] * 32, dtype=np.uint8)).tolist()  # 256 bits of alternating pattern
         # Sync word: something that looks NOTHING like the preamble
         # 0xD391 is a common choice, or 0x2DD4 (Barker-like)
         self.sync_word = sync_word

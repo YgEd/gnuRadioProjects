@@ -223,6 +223,25 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.source = mav_packet_source(self.center_freq , self.setSDRGain, self.osmosdr_sink, metrics_logger=self.metrics_logger)
 
 
+        # # Temporary loopback test — add this in TX __init__
+        # self.test_demod = digital.generic_demod(
+        #     constellation=constellations['qpsk'],
+        #     differential=True,
+        #     samples_per_symbol=4,
+        #     pre_diff_code=True,
+        #     excess_bw=0.35,
+        #     freq_bw=6.28/100,
+        #     timing_bw=6.28/100,
+        #     phase_bw=6.28/100,
+        #     verbose=False,
+        #     log=False
+        # )
+        # self.test_sink = blocks.vector_sink_b()
+
+        # # Try WITHOUT packer first:
+        # self.connect(self.source, self.mod)
+        # self.connect(self.mod, self.test_demod)
+        # self.connect(self.test_demod, self.test_sink)
         
         ##########################
         # Connections
@@ -231,9 +250,9 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.connect(self.source, self.packer)
         self.connect(self.packer, self.mod)
         self.connect(self.mod, self.tx_gain)
-        self.connect(self.tx_resampler, self.qt_freq_sink)
         self.connect(self.tx_gain, self.qt_time_sink)
         self.connect(self.tx_gain, self.tx_resampler)
+        self.connect(self.tx_resampler, self.qt_freq_sink)
         self.connect(self.tx_resampler, self.osmosdr_sink)
         self.connect(self.tx_resampler, self.metrics_probe)
 
@@ -290,11 +309,14 @@ class flow_graph(gr.top_block,Qt.QWidget):
     def _safe_shutdown(self):
         """Fully stop BladeRF transmission and close the device."""
         print("Shutting down BladeRF TX...")
+
+
         try:
             gain = self.osmosdr_sink.set_gain(0, 0)
             self.osmosdr_sink.set_if_gain(0, 0)
             self.osmosdr_sink.set_bb_gain(0, 0)
             self.osmosdr_sink.set_center_freq(2.4e9, 0)
+            
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
