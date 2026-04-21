@@ -133,7 +133,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         gains = [30.0, 20.0, 15.0, 10.0, 5.0, 3.0, 2.0, 1.0]
         curr_time = time.time()
         
-        if  curr_time >= self.time_since_gain_change + 2:
+        if  curr_time >= self.time_since_gain_change + 10:
             self.gain_index = (self.gain_index + 1) % len(gains)
             gainset = self.setSDRGain(gains[self.gain_index])
             self.time_since_gain_change = time.time()
