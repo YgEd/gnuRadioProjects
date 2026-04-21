@@ -1,7 +1,19 @@
+"""
+tx_flowgraph_generic.py
+
+TX flowgraph that supports both GFSK and PSK/QAM modulation.
+The packet source is identical for both — only the modulator
+and the packer stage differ.
+
+Signal flow:
+  GFSK:     source (unpacked bits) ──────────────────→ gfsk_mod → gain → resamp → SDR
+  PSK/QAM:  source (unpacked bits) → packer (8:1) → generic_mod → gain → resamp → SDR
+"""
+
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 from PyQt5 import Qt
-from txBlock import mav_packet_source
+from genTXBlock import mav_packet_source
 from rf_metrics import RFMetricsProbe, MetricsLogger
 import threading
 from pymavlink.dialects.v20 import common as mavlink2
@@ -11,17 +23,19 @@ import sip
 import signal
 import time
 import gc
-import subprocess
 
-class flow_graph(gr.top_block,Qt.QWidget):
-    def __init__(self):
 
-        ####################################
-        # QT Widget Setup
-        ####################################
+class flow_graph(gr.top_block, Qt.QWidget):
+    def __init__(self, modulation='gfsk'):
+        """
+        Parameters
+        ----------
+        modulation : str
+            One of 'gfsk', 'bpsk', 'qpsk', '8psk', '16qam'
+        """
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("Ouput TX bassaband")
+        self.setWindowTitle(f"TX — {modulation.upper()}")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -40,7 +54,6 @@ class flow_graph(gr.top_block,Qt.QWidget):
         self.top_layout.addLayout(self.top_grid_layout)
 
         self.settings = Qt.QSettings("GNU Radio", "osmos_test")
-
         try:
             geometry = self.settings.value("geometry")
             if geometry:
@@ -48,285 +61,157 @@ class flow_graph(gr.top_block,Qt.QWidget):
         except BaseException as exc:
             print(f"Qt GUI: Could not restore geometry: {str(exc)}", file=sys.stderr)
 
-        
-
         ####################################
         # Variables
         ####################################
-
-        # Need rational resampler to upsample to SDR smaple rate for 100e3 samp rate a 20/1 ratio is good (20 interpolation to 1 decimation)
-        # So on TX end need resampler with 20 interp 1 dec 
-        # On RX end need resampler with 20 dec 1 interp
-        # samp_rate determines DSP chain sampling rate
-        self.samp_rate = samp_rate = 100e3
+        self.modulation = modulation
+        self.samp_rate = 100e3
         self.sdr_samp_rate = 2e6
-
-        # symbol rate = samp_rate / samples per symbol
-        
-        self.center_freq = 915e6 #915 MHz
+        self.center_freq = 915e6
         self.samples_per_symbol = 4
-
-        # potentially plan for a 10mW output
-
-        # sensitivity is the frequency deviation factor. It controls the how far the carrier frequency shifts when you send a 1 vs 0 symbol
-        # sensitivity = (pi x h) /samples_per_symbol
-        # h = (2 x delta f) / symbol_rate
-        # h is you modulation index
-        # sensitivity of 1 means you have a modulation index of 1.27 which is very high
-        # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
-        self.sensitivity = 0.785
-
-        # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
-        # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
-        # High value like 1 induces minimal smoothing, sharp transitions leading to wide bandwidth occupancy with little intersymbol interference
+        self.sensitivity = 0.785   # h=0.5
         self.bt = 0.5
-
-        # gain_mu is timing recovery loop gain, how aggresively the clock recovery algorithm corrects its estimate. 
-        # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
-        # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
-        # kind of like PID tuning?
         self.gain_mu = 0.08
-
-        # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
-        # 0.5 means you start sampling within the middle of a period
         self.mu = 0.5
-
-        # omega relative limit establishes the allowed clock rate mismatch between TX and RX. This threshold prevents the timing recovery loop from going unstable
-        # same reference (simulation or share clock) 0.005 is fine
-        # Independent clocks (quality SDRs OTA) 0.01-0.02 is good to tolerate real oscillator drift
-        # Cheap SDRs may need as large as 0.05
         self.omega_relative_limit = 0.02
-
-        # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
+        self.tx_interpolation = 20
+        self.tx_decimation = 1
+        self.fractional_bw = 0.49
+        self.tx_gain_scalar = 1
+        self.sdr_RF_gain = 35
 
-        # TX interpolation and decimation amounts for rational resampler ratio
-        self.tx_interpolation=20
-        self.tx_decimation=1
-        
-        # RX interpolation and decimation amounts for rational resampler ratio
-        self.rx_interpolation=1
-        self.rx_decimation=20
-        # Fractional bw for TX rational resampler
-        self.fractional_bw=0.49
-        # TX gain scalar constant
-        self.tx_gain_scalar=1
-
-        ##########################
-        # BladeRF source variables
-        ##########################
-
-        self.sdr_RF_gain = 35    
-
-
-        # Define your constellation tiers
-        constellations = {
-            'bpsk':   digital.constellation_bpsk().base(),
-            'qpsk':   digital.constellation_qpsk().base(),
-            '8psk':   digital.constellation_8psk().base(),
-            '16qam':  digital.constellation_16qam().base(),
-        }   
-
-    
+        # Constellation lookup
+        self.constellations = {
+            'bpsk':  digital.constellation_bpsk().base(),
+            'qpsk':  digital.constellation_qpsk().base(),
+            '8psk':  digital.constellation_8psk().base(),
+            '16qam': digital.constellation_16qam().base(),
+        }
 
         #######################
         # Blocks
         #######################
 
-        
-                        
-        # upsample from 100e3 to 2e6 or (2Mhz sampling rate limit for bladerf is 61.44Mhz)
+        # TX resampler: 100 kHz → 2 MHz
         self.tx_resampler = filter.rational_resampler_ccf(
             interpolation=self.tx_interpolation,
             decimation=self.tx_decimation,
             taps=[],
             fractional_bw=self.fractional_bw
         )
-        
-        # how much you are scaling power form sdr 0.25 is good for bench testing, 0.5 half power good more realistic testing, 1 is max power may cause clipping
-        self.tx_gain = blocks.multiply_const_cc(self.tx_gain_scalar) 
 
-    
-        # gneric mod expects packed bits, but txBlock gives it unpacked bits
-        self.packer = blocks.unpacked_to_packed_bb(1, gr.GR_MSB_FIRST)
+        self.tx_gain = blocks.multiply_const_cc(self.tx_gain_scalar)
 
-        # Single modulator — swap constellation to change scheme
-        self.mod = digital.generic_mod(
-            constellation=constellations['qpsk'],  # default
-            differential=True,       # differential encoding handles phase ambiguity
-            samples_per_symbol=4,
-            pre_diff_code=True,
-            excess_bw=0.35,          # RRC rolloff — similar role to BT in GFSK
-            verbose=False,
-            log=False
-        )
-        
-        # osmos sink
+        # ---- Modulator selection ----
+        if modulation == 'gfsk':
+            # GFSK: source outputs unpacked bits → mod directly
+            self.mod = digital.gfsk_mod(
+                samples_per_symbol=self.samples_per_symbol,
+                sensitivity=self.sensitivity,
+                bt=self.bt,
+                verbose=False,
+                log=False,
+                do_unpack=False   # expects unpacked bits (1 bit per byte)
+            )
+            self.packer = None  # no packing needed
+        else:
+            # PSK/QAM: source outputs unpacked bits → pack → mod
+            #
+            # Why the packer is needed:
+            #   Your source outputs one bit per byte: [0x00, 0x01, 0x00, 0x01, ...]
+            #   generic_mod expects packed bytes:      [0x55, ...]
+            #   The packer collects 8 unpacked bytes into 1 packed byte.
+            self.packer = blocks.unpacked_to_packed_bb(
+                1,               # bits per input byte (1 = unpacked)
+                gr.GR_MSB_FIRST  # bit order matches np.unpackbits
+            )
+
+            self.mod = digital.generic_mod(
+                constellation=self.constellations[modulation],
+                differential=True,       # handles phase ambiguity
+                samples_per_symbol=self.samples_per_symbol,
+                pre_diff_code=True,
+                excess_bw=0.35,          # RRC rolloff
+                verbose=False,
+                log=False
+            )
+
+        # SDR sink
         self.osmosdr_sink = osmosdr.sink(
-            args="numchan=" + str(1) + " " + "bladeRF=0"
+            args="numchan=1 bladeRF=0"
         )
         self.osmosdr_sink.set_sample_rate(self.sdr_samp_rate)
         self.osmosdr_sink.set_center_freq(self.center_freq, 0)
-        self.osmosdr_sink.set_antenna('TX1', 0) # set antenna earlier so that the gain settings apply to that antenna
+        self.osmosdr_sink.set_antenna('TX1', 0)
         self.osmosdr_sink.set_freq_corr(0, 0)
-        self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)        # TX gain - start low
+        self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)
         self.osmosdr_sink.set_if_gain(15, 0)
         self.osmosdr_sink.set_bb_gain(15, 0)
         self.osmosdr_sink.set_bandwidth(0, 0)
 
-        # print(f"For TX 2")
-        # print(self.osmosdr_sink.get_gain("dsa", 0))
-        # print(self.osmosdr_sink.get_gain("system", 0))
-
+        # GUI sinks
         self.qt_freq_sink = qtgui.freq_sink_c(
-            1024,                # FFT size
-            5,  # window type 5 == blackman harris
-            self.center_freq,    # center freq for display
-            self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
-            "TX Monitor"
+            1024, 5, self.center_freq, self.sdr_samp_rate, "TX Monitor"
         )
-
         self.qt_freq_sink.set_update_time(0.10)
         self.qt_freq_sink.set_y_axis(-140, 10)
 
-        self.qt_time_sink = qtgui.time_sink_c(
-            1024,               # number of points
-            self.sdr_samp_rate, # sample rate
-            "TX Time Domain"
+        self._qt_freq_sink_win = sip.wrapinstance(
+            self.qt_freq_sink.qwidget(), Qt.QWidget
         )
-
-        # Adding gui sinks to gui
-    
-        self._qt_freq_sink_win = sip.wrapinstance(self.qt_freq_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self._qt_freq_sink_win, 0, 0, 1, 1)
 
-        self._qt_time_sink_win = sip.wrapinstance(self.qt_time_sink.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qt_time_sink_win, 1, 0, 1, 1)
-
-        # Add to your __init__ after your existing blocks:
-
-
-        # Metrics blocks
+        # Metrics
         self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
-        # Active metrics logger
         self.metrics_logger.start()
-
         self.metrics_probe = RFMetricsProbe(
-            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samp_rate=self.samp_rate,
             samples_per_symbol=self.samples_per_symbol,
             center_freq=self.center_freq,
             logger=self.metrics_logger,
             sensitivity=self.sensitivity
         )
 
-        # packet source
-        self.source = mav_packet_source(self.center_freq , self.setSDRGain, self.osmosdr_sink, metrics_logger=self.metrics_logger)
+        # Packet source (identical for all modulations)
+        self.source = mav_packet_source(
+            self.center_freq, self.setSDRGain, self.osmosdr_sink,
+            metrics_logger=self.metrics_logger
+        )
 
-
-        # # Temporary loopback test — add this in TX __init__
-        # self.test_demod = digital.generic_demod(
-        #     constellation=constellations['qpsk'],
-        #     differential=True,
-        #     samples_per_symbol=4,
-        #     pre_diff_code=True,
-        #     excess_bw=0.35,
-        #     freq_bw=6.28/100,
-        #     timing_bw=6.28/100,
-        #     phase_bw=6.28/100,
-        #     verbose=False,
-        #     log=False
-        # )
-        # self.test_sink = blocks.vector_sink_b()
-
-        # # Try WITHOUT packer first:
-        # self.connect(self.source, self.mod)
-        # self.connect(self.mod, self.test_demod)
-        # self.connect(self.test_demod, self.test_sink)
-        
         ##########################
         # Connections
-        #########################
+        ##########################
+        if self.packer is not None:
+            # PSK/QAM path: source → packer → mod
+            self.connect(self.source, self.packer)
+            self.connect(self.packer, self.mod)
+        else:
+            # GFSK path: source → mod directly
+            self.connect(self.source, self.mod)
 
-        self.connect(self.source, self.packer)
-        self.connect(self.packer, self.mod)
+        # Common path from modulator onward
         self.connect(self.mod, self.tx_gain)
-        self.connect(self.tx_gain, self.qt_time_sink)
         self.connect(self.tx_gain, self.tx_resampler)
-        self.connect(self.tx_resampler, self.qt_freq_sink)
         self.connect(self.tx_resampler, self.osmosdr_sink)
+        self.connect(self.tx_resampler, self.qt_freq_sink)
         self.connect(self.tx_resampler, self.metrics_probe)
 
-        # Connect loopback — tap off after GFSK mod
-        # Just for debug perposes
-        # self.connect(self.gfsk_mod, self.gfsk_demod)
-        # self.connect(self.gfsk_demod, self.debug_sink)
-
-    # def cli_thread(packet_source):
-    #     mav = mavlink2.MAVLink(None)
-    #     mav.srcSystem = 255
-    #     mav.srcComponent = 1
-        
-    #     transmitting = True
-        
-    #     def input_listener():
-    #         nonlocal transmitting
-    #         while True:
-    #             try:
-    #                 cmd = input("Enter command (start/stop/arm/guided/quit): ")
-    #             except (KeyboardInterrupt, EOFError):
-    #                 print("\nProgram Killed")
-    #                 Qt.QApplication.quit()
-    #                 return
-                
-    #             if cmd == 'stop':
-    #                 transmitting = False
-    #                 print("[CLI] Transmission stopped")
-    #             elif cmd == 'start':
-    #                 transmitting = True
-    #                 print("[CLI] Transmission started")
-    #             elif cmd == 'arm':
-    #                 msg = mav.command_long_encode(1, 1, 400, 0, 1, 0, 0, 0, 0, 0, 0)
-    #                 packet_source.send_message(msg.pack(mav), True)
-    #                 print("[CLI] Arm command sent")
-    #             elif cmd == 'guided':
-    #                 msg = mav.command_long_encode(1, 1, 176, 0, 1, 4, 0, 0, 0, 0, 0)
-    #                 packet_source.send_message(msg.pack(mav), True)
-    #                 print("[CLI] Guided command sent")
-    #             elif cmd == 'quit':
-    #                 transmitting = False
-    #                 Qt.QApplication.quit()
-    #                 return
-
-    #     listener = threading.Thread(target=input_listener, daemon=True)
-    #     listener.start()
-
-        ####################################
-        # Clean Up Methods
-        ####################################
-
-    
-
     def _safe_shutdown(self):
-        """Fully stop BladeRF transmission and close the device."""
         print("Shutting down BladeRF TX...")
-
-
         try:
-            gain = self.osmosdr_sink.set_gain(0, 0)
+            self.osmosdr_sink.set_gain(0, 0)
             self.osmosdr_sink.set_if_gain(0, 0)
             self.osmosdr_sink.set_bb_gain(0, 0)
             self.osmosdr_sink.set_center_freq(2.4e9, 0)
-            
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
 
-        # Stop the flow graph FIRST so the sink stops pulling samples
         self.source.stop()
         self.metrics_logger.close()
         self.stop()
         self.wait()
 
-        # Now close the actual device handle
         try:
             del self.osmosdr_sink
             self.osmosdr_sink = None
@@ -335,8 +220,7 @@ class flow_graph(gr.top_block,Qt.QWidget):
             print(f"Warning: could not release sink: {e}", file=sys.stderr)
 
         print("Flow graph stopped and device released.")
-    
-    # Method to update gain so it is accurately reflected in the logs
+
     def setSDRGain(self, gain):
         self.sdr_RF_gain = gain
         print(f'[mavSDRTX] Gain updated to {self.sdr_RF_gain}')
@@ -344,11 +228,17 @@ class flow_graph(gr.top_block,Qt.QWidget):
     def getSDRgain(self):
         return self.sdr_RF_gain
 
-    
-    
+
 if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mod', default='gfsk',
+                        choices=['gfsk', 'bpsk', 'qpsk', '8psk', '16qam'],
+                        help='Modulation scheme')
+    args = parser.parse_args()
+
     app = Qt.QApplication(sys.argv)
-    tb = flow_graph()
+    tb = flow_graph(modulation=args.mod)
     tb.show()
     app.processEvents()
 
@@ -363,12 +253,10 @@ if __name__ == '__main__':
     timer.start(500)
     timer.timeout.connect(lambda: None)
 
+    print(f"[TX] Starting with modulation: {args.mod.upper()}")
     tb.start()
 
     try:
         sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
-        
-
-

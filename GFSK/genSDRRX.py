@@ -1,3 +1,19 @@
+"""
+rx_flowgraph_generic.py
+
+RX flowgraph that supports both GFSK and PSK/QAM demodulation.
+The RX packet reader (rxBlock) is identical for both — only the
+demodulator and unpacker stage differ.
+
+Signal flow:
+  GFSK:     SDR → resamp+LPF → AGC → gfsk_demod ──────────────────→ destination (unpacked bits)
+  PSK/QAM:  SDR → resamp+LPF → AGC → generic_demod → unpacker (1:8) → destination (unpacked bits)
+
+The unpacker reverses what the TX packer did: each packed byte
+from generic_demod becomes 8 individual bit-per-byte samples
+that the RX block's bit-level sync search can process.
+"""
+
 from gnuradio import gr, blocks, digital, filter, analog, qtgui
 from gnuradio.filter import firdes
 import threading
@@ -13,10 +29,16 @@ from rf_metrics import RFMetricsProbe, MetricsLogger
 
 
 class flow_graph(gr.top_block, Qt.QWidget):
-    def __init__(self):
+    def __init__(self, modulation='gfsk'):
+        """
+        Parameters
+        ----------
+        modulation : str
+            Must match the TX modulation. One of 'gfsk', 'bpsk', 'qpsk', '8psk', '16qam'
+        """
         gr.top_block.__init__(self)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("Ouput RX bandpass")
+        self.setWindowTitle(f"RX — {modulation.upper()}")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -35,7 +57,6 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.top_layout.addLayout(self.top_grid_layout)
 
         self.settings = Qt.QSettings("GNU Radio", "osmos_test")
-
         try:
             geometry = self.settings.value("geometry")
             if geometry:
@@ -46,158 +67,103 @@ class flow_graph(gr.top_block, Qt.QWidget):
         ####################################
         # Variables
         ####################################
-
-        # Need rational resampler to upsample to SDR smaple rate for 100e3 samp rate a 20/1 ratio is good (20 interpolation to 1 decimation)
-        # So on TX end need resampler with 20 interp 1 dec 
-        # On RX end need resampler with 20 dec 1 interp
-        # samp_rate determines DSP chain sampling rate
-        self.samp_rate = samp_rate = 100e3
+        self.modulation = modulation
+        self.samp_rate = 100e3
         self.sdr_samp_rate = 2e6
-
-        # symbol rate = samp_rate / samples per symbol
-        
-        self.center_freq = 915e6 #915 MHz
+        self.center_freq = 915e6
         self.samples_per_symbol = 4
-
-        # potentially plan for a 10mW output
-
-        # sensitivity is the frequency deviation factor. It controls the how far the carrier frequency shifts when you send a 1 vs 0 symbol
-        # sensitivity = (pi x h) /samples_per_symbol
-        # h = (2 x delta f) / symbol_rate
-        # h is you modulation index
-        # sensitivity of 1 means you have a modulation index of 1.27 which is very high
-        # Typically you'd want a modulation index of about 0.5 which measn you'd hae a sensitivity of around 0.39
         self.sensitivity = 0.785
-
-        # bt is the bandwidth time product, controls the gaussian pulse-shaping filter that smooths frequency transitions. 
-        # Low value like 0.3 induces heavy smoothing, gradual transitions leading to narrowest bandwidth occupancy but introduces more intersymbol interference
-        # High value like 1 induces minimal smoothing, sharp transitions leading to wide bandwidth occupancy with little intersymbol interference
         self.bt = 0.5
-
-        # gain_mu is timing recovery loop gain, how aggresively the clock recovery algorithm corrects its estimate. 
-        # Higher gain_mu (0.3-0.5) -> faster lock, tracks rapid timing changes, jittery
-        # Lower gain_mu (0.05-0.1) -> slower lock, smoother, more stable once locked
-        # kind of like PID tuning?
         self.gain_mu = 0.08
-
-        # mu is hte initial fractional symbol timing offset estimate, where within a symbol period the demod starts sampling. Ranges from 0 to 1.
-        # 0.5 means you start sampling within the middle of a period
         self.mu = 0.5
-
-        # omega relative limit establishes the allowed clock rate mismatch between TX and RX. This threshold prevents the timing recovery loop from going unstable
-        # same reference (simulation or share clock) 0.005 is fine
-        # Independent clocks (quality SDRs OTA) 0.01-0.02 is good to tolerate real oscillator drift
-        # Cheap SDRs may need as large as 0.05
         self.omega_relative_limit = 0.02
-
-        # used to compensate for a consistent freqeuncy offset from tx and rx. Leave as 0 and adjust as needed or progromatically adjust with other blocks such as (Frequency Xlating FIR Filter)
         self.freq_error = 0.0
-
-        # RX interpolation and decimation ratio for rational resampler
-        self.rx_interpolation=1
-        self.rx_decimation=20
-        self.fractional_bw=0.4
-        self.tx_gain_scalar=1
-
-        # SDR RF gain
+        self.rx_decimation = 20
         self.sdr_RF_gain = 30
 
-        # Define your constellation tiers
-        constellations = {
-            'bpsk':   digital.constellation_bpsk().base(),
-            'qpsk':   digital.constellation_qpsk().base(),
-            '8psk':   digital.constellation_8psk().base(),
-            '16qam':  digital.constellation_16qam().base(),
-        }   
-
-
-    
+        self.constellations = {
+            'bpsk':  digital.constellation_bpsk().base(),
+            'qpsk':  digital.constellation_qpsk().base(),
+            '8psk':  digital.constellation_8psk().base(),
+            '16qam': digital.constellation_16qam().base(),
+        }
 
         #######################
         # Blocks
         #######################
 
-
-       
-
-        # resampler and lowpass all in one
+        # RX resampler + LPF
+        # For PSK/QAM the occupied bandwidth is determined by excess_bw (RRC rolloff)
+        # rather than BT*symbol_rate. With excess_bw=0.35:
+        #   BW = symbol_rate * (1 + excess_bw) = 25000 * 1.35 = 33.75 kHz
+        # This is similar to GFSK with h=0.5 and BT=0.5, so same filter works.
         self.rx_resampler_lowpass = filter.freq_xlating_fir_filter_ccf(
             decimation=self.rx_decimation,
             taps=firdes.low_pass(
                 gain=1,
                 sampling_freq=self.sdr_samp_rate,
-                # to determine cutoff freq you need to compute occupied bandwidth:
-                # occupied_bandwidth ~ symbol_rate * (1 + BT) in this case our with a samp_rate of 100e3 and samples per symbol at 4 and BT at 0.35 we get
-                # occupied_bandwidth ~ 100e3/4 * (1 + 0.35)
-                # Then to get cutoff freq we calculate
-                # cutoff_freq = occupied_bandwidth * 0.75 to 1 (this 0.75 to 1 scalar is a trade off between (next two lines))
-                # 0.75 -> tighter, less noise, but sensitive to freq offset
-                # 1 -> more open, tolerant to some offset
-                # If you have a high modulation index (h value) you may want ot expand your cut_off frequency as there will be a bigger freq gap between 1 and 0 signals
-                # You can expand up until samp_rate/2 because that is the nyquist limit so in this case cutoff_freq can be at most 50 Khz
-                cutoff_freq=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1,
-                # transition width rule of thumb is
-                # transition width ~ cutoff_freq * 0.25
-                transition_width=(self.samp_rate/self.samples_per_symbol) * (1 + self.bt) * 1 * 0.25
+                cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
+                transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
             ),
-            center_freq=0, #leave at 0 by default this is a constant offset if you know consistent tx rx freq offset
+            center_freq=0,    # adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
         )
 
-        # generic demod
-
-        self.demod = digital.generic_demod(
-            constellation=constellations['qpsk'],
-            differential=True,
-            samples_per_symbol=4,
-            pre_diff_code=True,
-            excess_bw=0.35,
-            freq_bw=6.28/50,
-            timing_bw=6.8/50,
-            phase_bw=6.8/50,
-            verbose=False,
-            log=False
-        )
-        
-
-        # agc for rx
-        # self.agc = analog.agc_cc(
-        #     rate=1e-4,       # adaptation rate — how fast AGC adjusts Higher values (1e-2 to 1e-3) get fast adaption but fluctuates iwth noise. Lower values (1e-4 to 1e-5) slow adaption but stable gain during packet
-        #     reference=1.0,   # target output amplitude
-        #     gain=1.0         # initial gain estimate
-        # )
-
-        # AGC2 is better as it has two different rates for when a strong signal appears you want to clamp down on it quick vs a sustained signal you want to back off on the rate
+        # AGC
         self.agc = analog.agc2_cc(
-            attack_rate=1e-2,   # how fast gain DECREASES (strong signal arrives)
-            decay_rate=1e-3,    # how fast gain INCREASES (signal weakens/disappears)
+            attack_rate=1e-2,
+            decay_rate=1e-3,
             reference=1.0,
             gain=1.0
         )
 
-        # generic demod outputs packed bits, but rxBlock expects unpacked
-        self.unpacker = blocks.packed_to_unpacked_bb(1, gr.GR_MSB_FIRST)
+        # ---- Demodulator selection ----
+        if modulation == 'gfsk':
+            self.demod = digital.gfsk_demod(
+                samples_per_symbol=self.samples_per_symbol,
+                sensitivity=self.sensitivity,
+                gain_mu=self.gain_mu,
+                mu=self.mu,
+                omega_relative_limit=self.omega_relative_limit,
+                freq_error=self.freq_error,
+                verbose=False,
+                log=False
+            )
+            self.unpacker = None  # gfsk_demod already outputs unpacked bits
+        else:
+            # PSK/QAM: generic_demod outputs packed bytes
+            # We unpack to individual bits so the RX block's
+            # bit-level sync search works identically to GFSK.
+            self.demod = digital.generic_demod(
+                constellation=self.constellations[modulation],
+                differential=True,
+                samples_per_symbol=self.samples_per_symbol,
+                pre_diff_code=True,
+                excess_bw=0.35,
+                freq_bw=6.28/50,      # wider than default for faster acquisition
+                timing_bw=6.28/50,
+                phase_bw=6.28/50,
+                verbose=False,
+                log=False
+            )
 
-        
-        # gfsk demod
-        self.gfsk_demod = digital.gfsk_demod(
-            samples_per_symbol=self.samples_per_symbol,
-            sensitivity=self.sensitivity,
-            gain_mu=self.gain_mu,
-            mu=self.mu,
-            omega_relative_limit=self.omega_relative_limit,
-            freq_error=self.freq_error,
-            verbose=False,
-            log=False)
-        
-        # osmos bladerf souce block
+            # Unpack: each packed byte → 8 individual bit bytes
+            # This is the inverse of the TX packer.
+            # After this, the data stream looks exactly like gfsk_demod output:
+            # one bit per byte, 0x00 or 0x01.
+            self.unpacker = blocks.packed_to_unpacked_bb(
+                1,               # bits per output byte
+                gr.GR_MSB_FIRST  # must match TX packer
+            )
+
+        # SDR source
         self.osmosdr_source = osmosdr.source(
-            args="numchan=" + str(1) + " " + "bladeRF=0"
+            args="numchan=1 bladeRF=0"
         )
         self.osmosdr_source.set_time_unknown_pps(osmosdr.time_spec_t())
         self.osmosdr_source.set_sample_rate(self.sdr_samp_rate)
         self.osmosdr_source.set_center_freq(self.center_freq, 0)
-        self.osmosdr_source.set_antenna('RX1', 0) # set RX antenna earlier to ensure gain is applied to correct port
+        self.osmosdr_source.set_antenna('RX1', 0)
         self.osmosdr_source.set_freq_corr(0, 0)
         self.osmosdr_source.set_dc_offset_mode(0, 0)
         self.osmosdr_source.set_iq_balance_mode(0, 0)
@@ -205,108 +171,92 @@ class flow_graph(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
         self.osmosdr_source.set_if_gain(10, 0)
         self.osmosdr_source.set_bb_gain(16, 0)
-        self.osmosdr_source.set_bandwidth(0,0)
+        self.osmosdr_source.set_bandwidth(0, 0)
 
-        # self.qt_freq_sink = qtgui.freq_sink_c(
-        #     1024,                # FFT size
-        #     5,  # window type 5 == blackman harris
-        #     self.center_freq,    # center freq for display
-        #     self.sdr_samp_rate,  # bandwidth (use post-resampler rate)
-        #     "RX Monitor"
-        # )
-
-        # self.qt_time_sink = qtgui.time_sink_c(
-        #     1024,               # number of points
-        #     self.samp_rate, # sample rate
-        #     "RX Time Domain"
-        # )
-
-        # Adding gui sinks to gui
-
-        # Create the FFT sink
+        # FFT display
         self.fft_sink = qtgui.freq_sink_c(
-            1024,              # FFT size
-            5,  # Window type
-            self.center_freq,       # Center frequency (e.g., 915e6)
-            self.sdr_samp_rate,         # Sample rate at this point in the chain
-            "OTA Signal"       # Label
+            1024, 5, self.center_freq, self.sdr_samp_rate, "OTA Signal"
         )
-        self.fft_sink.set_update_time(0.10)  # Update every 100ms
-        self.fft_sink.set_y_axis(-140, 10)  # dB range
-
-        # Get the Qt widget (needed to actually display it)
+        self.fft_sink.set_update_time(0.10)
+        self.fft_sink.set_y_axis(-140, 10)
         self.fft_win = sip.wrapinstance(self.fft_sink.qwidget(), Qt.QWidget)
         self.top_grid_layout.addWidget(self.fft_win, 0, 0, 1, 1)
-    
+
+        # Metrics
         self.metrics_logger = MetricsLogger(getGain=self.getGain)
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
-            samp_rate=self.samp_rate,          # 100e3 — post-resampler rate
+            samp_rate=self.samp_rate,
             samples_per_symbol=self.samples_per_symbol,
             center_freq=self.center_freq,
             logger=self.metrics_logger,
             sensitivity=self.sensitivity
         )
-       
-        # Main source block, gcs host specified should be the entire subnet (ending in 255 usually for /24)
-        self.destination = mav_packet_reader_with_metrics(self.center_freq, setSDRGain=self.setGain, metrics_logger=self.metrics_logger, publish_to_gcs=True, host="192.168.0.255", port=8080)
+
+        # Packet reader (identical for all modulations — it sees unpacked bits)
+        self.destination = mav_packet_reader_with_metrics(
+            self.center_freq,
+            setSDRGain=self.setGain,
+            metrics_logger=self.metrics_logger,
+            publish_to_gcs=True,
+            host="192.168.0.255",
+            port=8080
+        )
 
         ##########################
         # Connections
-        #########################
-
-        # gui snks
-        # self.connect(self.rx_resampler_lowpass, self.qt_freq_sink)
-        # self.connect(self.rx_resampler_lowpass, self.qt_time_sink)
+        ##########################
         self.connect(self.osmosdr_source, self.fft_sink)
-
         self.connect(self.osmosdr_source, self.rx_resampler_lowpass)
         self.connect(self.rx_resampler_lowpass, self.agc)
         self.connect(self.agc, self.demod)
-        self.connect(self.demod, self.unpacker)
-        self.connect(self.unpacker, self.destination)
-        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
-        # self.connect(self.gfsk_demod, self.destination)
 
+        if self.unpacker is not None:
+            # PSK/QAM: demod (packed bytes) → unpacker → destination (unpacked bits)
+            self.connect(self.demod, self.unpacker)
+            self.connect(self.unpacker, self.destination)
+        else:
+            # GFSK: demod outputs unpacked bits directly
+            self.connect(self.demod, self.destination)
+
+        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
 
     def closeEvent(self, event):
-        """Handle window close button — same cleanup as SIGINT."""
         self._safe_shutdown()
         event.accept()
 
     def getGain(self):
-        return self.sdr_RF_gain 
-    
+        return self.sdr_RF_gain
+
     def setGain(self, gain):
         self.sdr_RF_gain = gain
-        gainset = self.osmosdr_source.set_gain(gain, 0)
-        return gainset
+        return self.osmosdr_source.set_gain(gain, 0)
 
     def _safe_shutdown(self):
-        """Zero RF gains and stop the flow graph cleanly."""
-        print("Shutting down BladeRF TX...")
+        print("Shutting down BladeRF RX...")
         try:
-            # Kill RF output before stopping the scheduler
             self.osmosdr_source.set_gain(0, 0)
             self.osmosdr_source.set_if_gain(0, 0)
             self.osmosdr_source.set_bb_gain(0, 0)
         except Exception as e:
             print(f"Warning: could not zero gains: {e}", file=sys.stderr)
-        
-        self.metrics_logger.close()
 
+        self.metrics_logger.close()
         self.stop()
         self.wait()
         print("Flow graph stopped.")
 
-    
-
-
 
 if __name__ == '__main__':
-    app = Qt.QApplication(sys.argv)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mod', default='gfsk',
+                        choices=['gfsk', 'bpsk', 'qpsk', '8psk', '16qam'],
+                        help='Modulation scheme (must match TX)')
+    args = parser.parse_args()
 
-    tb = flow_graph()
+    app = Qt.QApplication(sys.argv)
+    tb = flow_graph(modulation=args.mod)
     tb.show()
     app.processEvents()
 
@@ -315,22 +265,16 @@ if __name__ == '__main__':
         tb._safe_shutdown()
         Qt.QApplication.quit()
 
-
-    def noop():
-        pass
-
     signal.signal(signal.SIGINT, sig_handler)
 
     timer = Qt.QTimer()
     timer.start(500)
-    timer.timeout.connect(noop)
+    timer.timeout.connect(lambda: None)
 
+    print(f"[RX] Starting with modulation: {args.mod.upper()}")
     tb.start()
 
     try:
         sys.exit(app.exec_())
     except KeyboardInterrupt:
         sig_handler()
-        
-
-
