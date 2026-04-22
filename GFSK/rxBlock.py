@@ -3,7 +3,7 @@ import pmt
 from pymavlink import mavutil
 import csv
 import numpy as np
-from txBlock import sync_word, whiten, crc8, crc16, log_name
+from genTXBlock import sync_word, whiten, crc8, crc16, log_name, CODED_LEN_FIELD_PADDED
 from channel_coding import (
     ViterbiDecoder, BlockInterleaver,
     compute_coded_length, decode_length_field,
@@ -162,9 +162,9 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         self.constructed_bits = list(self.sync_word)
 
             elif self.state == 'READ_LENGTH':
-                if len(self.bit_buffer) >= CODED_LEN_FIELD_BITS:
+                if len(self.bit_buffer) >= CODED_LEN_FIELD_PADDED:
                     coded_len_bits = np.array(
-                        self.bit_buffer[:CODED_LEN_FIELD_BITS], dtype=np.uint8
+                        self.bit_buffer[:CODED_LEN_FIELD_PADDED], dtype=np.uint8
                     )
 
                     # FEC-decode the length field (Viterbi + CRC-8 check)
@@ -199,7 +199,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         self.state = 'SEARCHING'
                     else:
                         self.constructed_bits.extend(
-                            self.bit_buffer[:CODED_LEN_FIELD_BITS]
+                            self.bit_buffer[:CODED_LEN_FIELD_PADDED]
                         )
                         print(f"[GNURXBlock] Payload length: {self.payload_len} bytes (FEC+CRC OK)")
                         self.bit_buffer = []

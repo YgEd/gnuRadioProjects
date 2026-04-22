@@ -1,5 +1,5 @@
 """
-txBlock_generic.py
+genTXBlock.py
 
 Modified TX packet source that works with BOTH gfsk_mod and generic_mod.
  
@@ -32,6 +32,22 @@ from channel_coding import (
     compute_coded_length, encode_length_field,
     INTERLEAVER_ROWS, CODED_LEN_FIELD_BITS
 )
+
+# Pad the 60-bit FEC-coded length field to 64 bits (8 bytes).
+# Without this, the unpacked_to_packed_bb block in PSK/QAM mode
+# grabs 4 bits from the interleaved payload to complete a byte,
+# shifting everything downstream by 4 bits.
+#
+# Frame alignment check:
+#   Preamble:     256 bits  (32 bytes)  ✓
+#   Sync word:     24 bits  ( 3 bytes)  ✓
+#   Length field:  64 bits  ( 8 bytes)  ✓  (was 60 — padded with 4 zeros)
+#   Interleaved:  16*cols   (always multiple of 16, hence of 8)  ✓
+#   Postamble:     64 bits  ( 8 bytes)  ✓
+#
+# RX must also read 64 bits for the length field and strip the 4 pad bits.
+CODED_LEN_FIELD_PADDED = 64
+LEN_FIELD_PAD_BITS = CODED_LEN_FIELD_PADDED - CODED_LEN_FIELD_BITS  # = 4
 
 now = datetime.datetime.now().isoformat()
 log_name = f"packet-log-{now}.csv"
@@ -131,12 +147,8 @@ class mav_packet_source(gr.sync_block):
     def build_packet(self, message, raw=False):
         """Build a framed, FEC-coded packet from whitened payload bytes.
 
-        Frame structure (all unpacked bits):
-        [preamble 256b | sync 24b | FEC-coded len 60b | FEC-coded payload | postamble 64b]
-
-        The postamble is NEW — it provides guard bits so the RX timing
-        recovery loop doesn't drift while reading the tail of the coded region.
-        RX ignores it (only reads interleaved_len bits after the length field).
+        Frame structure (all unpacked bits, every section multiple of 8):
+        [preamble 256b | sync 24b | FEC-coded len 64b | FEC-coded payload | postamble 64b]
         """
         payload_bits = np.unpackbits(message)
         payload_bytes = list(np.packbits(np.array(payload_bits, dtype=np.uint8)))
@@ -157,20 +169,35 @@ class mav_packet_source(gr.sync_block):
         interleaved_len, cols, _ = compute_coded_length(payload_len)
         interleaved = self._interleaver.interleave(coded, cols)
 
+        # FEC-encode the length field (produces 60 bits)
         coded_len_field = encode_length_field(payload_len, crc8)
+
+        # Pad to 64 bits so the packer's byte boundaries align
+        # with packet structure. RX strips these 4 zeros before decoding.
+        coded_len_padded = np.concatenate([
+            coded_len_field,
+            np.zeros(LEN_FIELD_PAD_BITS, dtype=np.uint8)
+        ])
 
         # Frame with postamble
         packet = np.concatenate([
-            self.preamble,
-            self.sync_word,
-            coded_len_field,
-            interleaved,
-            POSTAMBLE         # NEW: guard bits at end
+            self.preamble,       # 256 bits (32 bytes)
+            self.sync_word,      #  24 bits ( 3 bytes)
+            coded_len_padded,    #  64 bits ( 8 bytes) — was 60, now padded
+            interleaved,         #  multiple of 16, hence of 8
+            POSTAMBLE            #  64 bits ( 8 bytes)
         ])
+
+        # Verify every section is byte-aligned so generic_mod works
+        assert len(self.preamble) % 8 == 0, f"Preamble not byte-aligned: {len(self.preamble)}"
+        assert len(self.sync_word) % 8 == 0, f"Sync not byte-aligned: {len(self.sync_word)}"
+        assert len(coded_len_padded) % 8 == 0, f"Length field not byte-aligned: {len(coded_len_padded)}"
+        assert len(interleaved) % 8 == 0, f"Interleaved not byte-aligned: {len(interleaved)}"
+        assert len(packet) % 8 == 0, f"Total packet not byte-aligned: {len(packet)}"
 
         packet_for_log = np.concatenate([
             self.sync_word,
-            coded_len_field,
+            coded_len_padded,
             interleaved
         ])
 
@@ -188,6 +215,7 @@ class mav_packet_source(gr.sync_block):
 
         whitened_msg = whiten(message)
         packet, packet_for_log, crc_for_log = self.build_packet(whitened_msg, raw)
+        print(f"[mavGNUTX] Packet length: {len(packet)} bits, {float(len(packet))/8} bytes")
 
         payload_len_bytes = [len(message) >> 8, len(message) & 0xFF]
         len_crc_byte = crc8(payload_len_bytes)
