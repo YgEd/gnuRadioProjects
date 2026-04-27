@@ -34,7 +34,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
 
-    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080):
+    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080, varygain=False):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -62,6 +62,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.addr = (host, port)
 
         # for gain variation
+        self.varygain = varygain
         self.setSDRGain = setSDRGain
         self.time_since_gain_change = time.time()
         self.gain_index = 0
@@ -146,7 +147,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
     def work(self, input_items, output_items):
 
-        self.gainSetter()
+        if self.varygain:
+            self.gainSetter()
         in_data = input_items[0]
 
         for bit in in_data:

@@ -96,7 +96,7 @@ POSTAMBLE = [1, 0] * 32  # 64 bits alternating
 
 
 class mav_packet_source(gr.sync_block):
-    def __init__(self, freq, set_bladerf_gain=None, bladerf=None, metrics_logger=None):
+    def __init__(self, freq, set_bladerf_gain=None, bladerf=None, metrics_logger=None, varygain=False, packed=False):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Source",
@@ -126,6 +126,7 @@ class mav_packet_source(gr.sync_block):
 
         self.metrics_logger = metrics_logger
         self.bladerf = bladerf
+        self.varygain = varygain
 
         self.sitl = sitl.SITLManager()
         print("[TX] Attempting to start and connect to sitl")
@@ -133,12 +134,15 @@ class mav_packet_source(gr.sync_block):
         self._time_since_telem = int(time.time())
         self._time_since_gps = int(time.time())
         self._time_since_gain_change = int(time.time())
+        self._time_since_hb = int(time.time())
 
         self._gain_index = 0
         self.set_bladerf_gain = set_bladerf_gain
 
         self._fec_encoder = ConvolutionalEncoder()
         self._interleaver = BlockInterleaver()
+
+        self.packed = packed
 
     def string_to_bits(self, text):
         byte_array = np.array([ord(c) for c in text], dtype=np.uint8)
@@ -188,12 +192,17 @@ class mav_packet_source(gr.sync_block):
             POSTAMBLE            #  64 bits ( 8 bytes)
         ])
 
+
         # Verify every section is byte-aligned so generic_mod works
         assert len(self.preamble) % 8 == 0, f"Preamble not byte-aligned: {len(self.preamble)}"
         assert len(self.sync_word) % 8 == 0, f"Sync not byte-aligned: {len(self.sync_word)}"
         assert len(coded_len_padded) % 8 == 0, f"Length field not byte-aligned: {len(coded_len_padded)}"
         assert len(interleaved) % 8 == 0, f"Interleaved not byte-aligned: {len(interleaved)}"
         assert len(packet) % 8 == 0, f"Total packet not byte-aligned: {len(packet)}"
+        
+        # check if output should be packed
+        if self.packed:
+            packet = np.packbits(packet.astype(np.uint8))
 
         packet_for_log = np.concatenate([
             self.sync_word,
@@ -215,7 +224,7 @@ class mav_packet_source(gr.sync_block):
 
         whitened_msg = whiten(message)
         packet, packet_for_log, crc_for_log = self.build_packet(whitened_msg, raw)
-        print(f"[mavGNUTX] Packet length: {len(packet)} bits, {float(len(packet))/8} bytes")
+        print(f"[mavGNUTX] Packet length: {len(packet)} bytes, {float(len(packet))*8} bits")
 
         payload_len_bytes = [len(message) >> 8, len(message) & 0xFF]
         len_crc_byte = crc8(payload_len_bytes)
@@ -249,22 +258,23 @@ class mav_packet_source(gr.sync_block):
         if msg.get_type() == 'HEARTBEAT':
             print(f"[mavGNUTX] Sending {msg.get_type()} Message")
             self.send_message(msg.pack(self._mav))
+            self._time_since_hb = int(time.time())
 
-        if msg.get_type() == 'STATUSTEXT':
-            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-            self.send_message(msg.pack(self._mav))
+        # if msg.get_type() == 'STATUSTEXT':
+        #     print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #     self.send_message(msg.pack(self._mav))
 
-        if msg.get_type() == 'GLOBAL_POSITION_INT':
-            if self._time_since_gps + 2 < curr_time:
-                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-                self.send_message(msg.pack(self._mav))
-                self._time_since_gps = int(time.time())
+        # if msg.get_type() == 'GLOBAL_POSITION_INT':
+        #     if self._time_since_gps + 2 < curr_time:
+        #         print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #         self.send_message(msg.pack(self._mav))
+        #         self._time_since_gps = int(time.time())
 
-        if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
-            if self._time_since_telem + 5 < curr_time:
-                print(f"[mavGNUTX] Sending {msg.get_type()} Message")
-                self.send_message(msg.pack(self._mav))
-                self._time_since_telem = int(time.time())
+        # if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
+        #     if self._time_since_telem + 5 < curr_time:
+        #         print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #         self.send_message(msg.pack(self._mav))
+        #         self._time_since_telem = int(time.time())
 
     def setGain(self, curr_time):
         gain_set = None
@@ -283,7 +293,10 @@ class mav_packet_source(gr.sync_block):
         if self.sitl is not None:
             msg = self.sitl.get_mavlink_msg()
             if msg is not None:
-                gain_set = self.setGain(int(time.time()))
+                if self.varygain:
+                    gain_set = self.setGain(int(time.time()))
+                else:
+                    gain_set = None
                 if gain_set is not None:
                     print(f'[mavGNUTX] Gain updated to {gain_set}')
                 self.sendGuard(msg, int(time.time()))
@@ -294,9 +307,7 @@ class mav_packet_source(gr.sync_block):
             # no symbol transitions for the M&M loop to track.
             # Alternating 0/1 gives continuous transitions.
             # For GFSK this is also fine — it just produces a tone.
-            for i in range(n_requested):
-                out[i] = (self._idle_phase + i) & 1
-            self._idle_phase = (self._idle_phase + n_requested) & 1
+            out[:] = 0x55
             return n_requested
 
         n = min(n_requested, len(self.packet_queue))
@@ -304,10 +315,7 @@ class mav_packet_source(gr.sync_block):
         self.packet_queue = self.packet_queue[n:]
 
         if n < n_requested:
-            # Fill remainder with alternating too
-            for i in range(n, n_requested):
-                out[i] = (self._idle_phase + i - n) & 1
-            self._idle_phase = (self._idle_phase + n_requested - n) & 1
+            out[n:] = 0x55
 
         return n_requested
 

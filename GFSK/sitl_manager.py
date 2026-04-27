@@ -197,7 +197,8 @@ def _sitl_process(
                 
                 forward_queue.put_nowait(msg)  # rename this queue to forward_queue for clarity
             except Exception as e:
-                print(f"[SITL] Pack/queue error: {e}")
+                # print(f"[SITL] Pack/queue error: {e}")
+                pass
         
 
         ts = datetime.datetime.now().isoformat()

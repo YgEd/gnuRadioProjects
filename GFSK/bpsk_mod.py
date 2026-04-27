@@ -72,6 +72,7 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         self.sps = sps = 4
         self.symbol_rate = symbol_rate = samp_rate/sps
         self.qpsk_obj = qpsk_obj = digital.constellation_qpsk().base()
+        self.bpsk_obj = bpsk_obj = digital.constellation_bpsk().base()
         self.qpsk_obj.set_npwr(1.0)
         # self.modulation = modulation
         self.sdr_samp_rate = 2e6
@@ -151,6 +152,14 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
             1, #number of inputs
             None # parent
         )
+
+        self.demod_gui = qtgui.time_sink_c(
+            1024,
+            samp_rate,
+            "QPSK DEMOD Output",
+            1,
+            None
+        )
         self.qtgui_time_sink_x_0.set_update_time(0.10)
         self.qtgui_time_sink_x_0.set_y_axis(-1, 1)
 
@@ -208,10 +217,17 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
             digital.IR_MMSE_8TAP,
             128,
             [])
-        self.digital_diff_decoder_bb_0 = digital.diff_decoder_bb(4, digital.DIFF_DIFFERENTIAL)
-        self.digital_costas_loop_cc_0 = digital.costas_loop_cc((6.28/100), 2, False)
+        self.digital_diff_decoder_bb_0 = digital.diff_decoder_bb(
+            2, # modulation order 2^(amount of bits per symbol)
+        digital.DIFF_DIFFERENTIAL)
+        
+        self.digital_costas_loop_cc_0 = digital.costas_loop_cc(
+            (6.28/100), 
+            2, # amount of symbols = 2^(amount of bits per symbol)
+            False)
+        
         self.digital_constellation_modulator_0 = digital.generic_mod(
-            constellation=qpsk_obj,
+            constellation=bpsk_obj,
             differential=True,
             samples_per_symbol=sps,
             pre_diff_code=True,
@@ -219,8 +235,7 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
             verbose=False,
             log=False,
             truncate=False)
-        self.digital_constellation_decoder_cb_0 = digital.constellation_decoder_cb(qpsk_obj)
-        self.blocks_vector_source_x_0 = blocks.vector_source_b([1, 0, 1, 1, 1, 0], True, 1, [])
+        self.digital_constellation_decoder_cb_0 = digital.constellation_decoder_cb(bpsk_obj)
         self.blocks_vector_sink_x_0 = blocks.vector_sink_b(1, 1024)
         self.blocks_throttle2_0 = blocks.throttle( gr.sizeof_gr_complex*1, samp_rate, True, 0 if "auto" == "auto" else max( int(float(0.1) * samp_rate) if "auto" == "time" else int(0.1), 1) )
         self.blocks_tag_gate_0 = blocks.tag_gate(gr.sizeof_gr_complex * 1, False)
@@ -244,17 +259,37 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         # Mav Source and Destination Blocks
         self.source = mav_packet_source(
             self.center_freq, self.setSDRGain, None,
-            metrics_logger=self.metrics_logger
+            metrics_logger=self.metrics_logger,
+            packed=True
         )
 
         self.destination = mav_packet_reader_with_metrics(
             self.center_freq,
-            setSDRGain=self.setGain,
+            setSDRGain=self.setSDRGain,
             metrics_logger=self.metrics_logger,
             publish_to_gcs=True,
             host="192.168.0.255",
             port=8080
         )
+
+        # unpacker for mod output
+        self.unpack = blocks.unpack_k_bits_bb(1) # number is how many bits per symbol
+
+        # constellation graph gui
+        self.constellation_plot = qtgui.const_sink_c(
+            1024,
+            "received constellation",
+            1,
+            None
+        )
+        self.constellation_plot.set_update_time(0.10)
+        self.constellation_plot.set_y_axis(-2,2)
+        self.constellation_plot.set_x_axis(-2,2)
+
+        self._constellation_plot_win = sip.wrapinstance(
+            self.constellation_plot.qwidget(), Qt.QWidget
+        )
+        self.top_layout.addWidget(self._constellation_plot_win)
 
 
 
@@ -264,15 +299,18 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         ##################################################
         self.connect(self.source, (self.digital_constellation_modulator_0, 0))
         self.connect((self.digital_constellation_modulator_0, 0), (self.blocks_tag_gate_0, 0))
-        self.connect((self.digital_constellation_modulator_0, 0), (self.blocks_throttle2_0, 0))
         self.connect((self.digital_constellation_modulator_0, 0), (self.qtgui_time_sink_x_0, 0))
-        self.connect((self.blocks_tag_gate_0, 0), (self.filter_fft_rrc_filter_0, 0))
+        self.connect((self.blocks_tag_gate_0), (self.blocks_throttle2_0, 0))
+        self.connect((self.blocks_throttle2_0, 0), (self.filter_fft_rrc_filter_0, 0))
         self.connect((self.filter_fft_rrc_filter_0, 0), (self.digital_symbol_sync_xx_0, 0))
         self.connect((self.digital_symbol_sync_xx_0, 0), (self.digital_costas_loop_cc_0, 0))
         self.connect((self.digital_costas_loop_cc_0, 0), (self.digital_constellation_decoder_cb_0, 0))
         self.connect((self.digital_costas_loop_cc_0, 0), (self.qtgui_time_sink_x_1, 0))
-        self.connect((self.digital_constellation_decoder_cb_0, 0), (self.digital_diff_decoder_bb_0, 0))
-        self.connect((self.digital_diff_decoder_bb_0, 0), self.destination)
+        self.connect(self.digital_costas_loop_cc_0, self.constellation_plot)
+        self.connect((self.digital_constellation_decoder_cb_0), (self.digital_diff_decoder_bb_0, 0))
+        self.connect((self.digital_diff_decoder_bb_0, 0), self.unpack)
+        self.connect(self.unpack, self.destination)
+ 
 
     def getSDRgain(self):
         return self.sdr_RF_gain
