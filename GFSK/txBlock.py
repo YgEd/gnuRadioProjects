@@ -11,9 +11,8 @@ import time
 from channel_coding import (
     ConvolutionalEncoder, BlockInterleaver,
     compute_coded_length, encode_length_field,
-    INTERLEAVER_ROWS, CODED_LEN_FIELD_BITS
+    INTERLEAVER_ROWS, CODED_LEN_FIELD_BITS, bits_to_bytes
 )
-
 # construct logging file name
 now = datetime.datetime.now().isoformat()
 log_name = f"packet-log-{now}.csv"
@@ -182,7 +181,14 @@ class mav_packet_source(gr.sync_block):
             payload_crc_bits
         ])
 
-        return (packet, packet_for_log, crc_for_log)
+        # Add right before the return in build_packet
+        print(f"[TX DEBUG] payload_len={payload_len}")
+        print(f"[TX DEBUG] coded_len_field={len(coded_len_field)} bits")
+        print(f"[TX DEBUG] interleaved={len(interleaved)} bits, cols={cols}")
+        print(f"[TX DEBUG] CRC=0x{payload_crc:04x}")
+        print(f"[TX DEBUG] first 16 interleaved bits: {list(interleaved[:16])}")
+
+        return (packet, packet_for_log, crc_for_log, payload_crc_bits)
 
     def send_message(self, message, raw=False):
         if raw:
@@ -191,7 +197,10 @@ class mav_packet_source(gr.sync_block):
       
         whitened_msg = whiten(message)
         # print(f"whitened message {whitened_msg}, whiten function ran again: {whiten(whitened_msg)}")
-        packet, packet_for_log, crc_for_log = self.build_packet(whitened_msg, raw)
+        packet, packet_for_log, crc_for_log, payload_crc_bits = self.build_packet(whitened_msg, raw)
+        crc_bytes = bits_to_bytes(payload_crc_bits)
+        payload_crc = (crc_bytes[0] << 8) | crc_bytes[1]
+        print(f"[mavGNUTX] Packet Length: {float(len(packet))/8} bytes\nPayload CRC bytes: {payload_crc:#x}")
         
         # Compute CRC bytes directly instead of slicing the bit array
         payload_len_bytes = [len(message) >> 8, len(message) & 0xFF]
