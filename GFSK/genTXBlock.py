@@ -33,6 +33,14 @@ from channel_coding import (
     INTERLEAVER_ROWS, CODED_LEN_FIELD_BITS
 )
 
+
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    RESET = '\033[0m'
+
 # Pad the 60-bit FEC-coded length field to 64 bits (8 bytes).
 # Without this, the unpacked_to_packed_bb block in PSK/QAM mode
 # grabs 4 bits from the interleaved payload to complete a byte,
@@ -224,7 +232,7 @@ class mav_packet_source(gr.sync_block):
 
         whitened_msg = whiten(message)
         packet, packet_for_log, crc_for_log = self.build_packet(whitened_msg, raw)
-        print(f"[mavGNUTX] Packet length: {len(packet)} bytes, {float(len(packet))*8} bits")
+        print(f"[genTXBlock] Packet length: {len(packet)} bytes, {float(len(packet))*8} bits")
 
         payload_len_bytes = [len(message) >> 8, len(message) & 0xFF]
         len_crc_byte = crc8(payload_len_bytes)
@@ -256,23 +264,23 @@ class mav_packet_source(gr.sync_block):
 
     def sendGuard(self, msg, curr_time):
         if msg.get_type() == 'HEARTBEAT':
-            print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+            print(f"{Colors.YELLOW}[genTXBlock] Sending {msg.get_type()} Message{Colors.RESET}")
             self.send_message(msg.pack(self._mav))
             self._time_since_hb = int(time.time())
 
         # if msg.get_type() == 'STATUSTEXT':
-        #     print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #     print(f"[genTXBlock] Sending {msg.get_type()} Message")
         #     self.send_message(msg.pack(self._mav))
 
         # if msg.get_type() == 'GLOBAL_POSITION_INT':
         #     if self._time_since_gps + 2 < curr_time:
-        #         print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #         print(f"[genTXBlock] Sending {msg.get_type()} Message")
         #         self.send_message(msg.pack(self._mav))
         #         self._time_since_gps = int(time.time())
 
         # if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
         #     if self._time_since_telem + 5 < curr_time:
-        #         print(f"[mavGNUTX] Sending {msg.get_type()} Message")
+        #         print(f"[genTXBlock] Sending {msg.get_type()} Message")
         #         self.send_message(msg.pack(self._mav))
         #         self._time_since_telem = int(time.time())
 
@@ -287,6 +295,7 @@ class mav_packet_source(gr.sync_block):
         return gain_set
 
     def work(self, input_items, output_items):
+
         out = output_items[0]
         n_requested = len(out)
 
@@ -298,7 +307,7 @@ class mav_packet_source(gr.sync_block):
                 else:
                     gain_set = None
                 if gain_set is not None:
-                    print(f'[mavGNUTX] Gain updated to {gain_set}')
+                    print(f'[genTXBlock] Gain updated to {gain_set}')
                 self.sendGuard(msg, int(time.time()))
 
         if len(self.packet_queue) == 0:
@@ -319,5 +328,16 @@ class mav_packet_source(gr.sync_block):
 
         return n_requested
 
+    def perm_stop(self):
+        if self.sitl is not None:
+            self.sitl.perm_stop()
+        self.packet = []
+    
     def stop(self):
-        self.sitl.stop()
+        if self.sitl is not None:
+            try:
+                self.sitl.stop()
+            except Exception as _:
+                pass
+        
+        

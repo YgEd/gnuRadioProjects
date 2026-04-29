@@ -15,6 +15,12 @@ import time
 # Import your existing helpers from mavGNUBlock
 # (whiten, crc8, crc16, log_packet, sync_word, log_name are defined there)
 # This file only defines the updated class — import it alongside mavGNUBlock
+class Colors:
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    RESET = '\033[0m'
 
 
 class mav_packet_reader_with_metrics(gr.sync_block):
@@ -178,7 +184,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     ])
 
                     if not len_valid:
-                        print(f"[GNURXBlock] Length field FEC decode FAILED")
+                        print(f"{Colors.RED}[GNURXBlock] Length field FEC decode FAILED{Colors.RESET}")
                         ber = self._estimate_ber(success=False)
 
                         if self.metrics_logger:
@@ -269,7 +275,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     ).tolist())
 
                     if received_crc_val != expected_crc_val:
-                        print(f"[GNURXBlock] Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x}")
+                        print(f"{Colors.RED}[GNURXBlock] Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x} {Colors.RESET}")
                         ber = self._estimate_ber(success=False)
 
                         if self.metrics_logger:
@@ -295,7 +301,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     # SUCCESS — FEC corrected any errors, CRC confirmed
                     ber = self._estimate_ber(success=True)
                     msg = None
-                    print(f"[GNURXBlock] Payload Found! (FEC decoded)")
+                    print(f"{Colors.GREEN}[GNURXBlock] Payload Found! (FEC decoded){Colors.RESET}")
                     try:
                         mav = mavutil.mavlink.MAVLink(None)
                         msg = mav.parse_char(payload_bytes)

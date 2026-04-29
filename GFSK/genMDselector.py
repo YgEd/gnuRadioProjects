@@ -89,6 +89,10 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         self.tx_gain_scalar = 1
         self.sdr_RF_gain = 35
 
+        # modulation scheme selection variables
+        self.current_mode = 0
+        self.mod_strs = ['BPSK', 'QPSK', '16QAM']
+        
         ##################################################
         # Blocks
         ##################################################
@@ -106,8 +110,8 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         self.bps_arr = [1, 2, 4]
         self.rso_arr = [2, 4, 16]
 
-        # TX selector: 1 input (source), 3 outputs for each modulation type
-        self.tx_selector = blocks.selector(gr.sizeof_char, 0, 0)
+        # # TX selector: 1 input (source), 3 outputs for each modulation type
+        # self.tx_selector = blocks.selector(gr.sizeof_char, 0, 0)
 
         # global rrc_taps block
         nfilts = 32
@@ -158,6 +162,9 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
             log=False,
             truncate=False)
 
+        # put tx blocsk in a mode ordered array
+        self.cmods = [self.cmod_0, self.cmod_1, self.cmod_2]
+
         ##################################################
         # RX Demod chains
         ##################################################
@@ -191,13 +198,19 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         self.unpack_1 = blocks.unpack_k_bits_bb(self.bps_arr[1])
         self.unpack_2 = blocks.unpack_k_bits_bb(self.bps_arr[2])
         
+        # put rx chains in mode ordered arrays
+        self.pfbs = [self.pfb_0, self.pfb_1, self.pfb_2]
+        self.costasls = [self.cl_0, self.cl_1, self.cl_2]
+        self.cdecodes = [self.cdecode_0, self.cdecode_1, self.cdecode_2]
+        self.diffds = [self.diffd_0, self.diffd_1, self.diffd_2]
+        self.unpacks = [self.unpack_0, self.unpack_1, self.unpack_2]
 
         ##################################################
         # GUI Blocks
         ##################################################
 
-        self.rx_gui_selector = blocks.selector(gr.sizeof_gr_complex, 0, 0)
-        self.tx_gui_selector = blocks.selector(gr.sizeof_gr_complex, 0, 0)
+        # self.rx_gui_selector = blocks.selector(gr.sizeof_gr_complex, 0, 0)
+        # self.tx_gui_selector = blocks.selector(gr.sizeof_gr_complex, 0, 0)
 
 
         # self.qtgui_time_sink_x_1 = qtgui.time_sink_c(
@@ -408,50 +421,63 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         # TX Chain
         # modulation selector
         self.connect(self.source, self.cmod_0)
-        self.connect(self.source, self.cmod_1)
-        self.connect(self.source, self.cmod_2)
-        # cmod connections to output selector
-        self.connect(self.cmod_0, (self.tx_out_selector, 0))
-        self.connect(self.cmod_1, (self.tx_out_selector, 1))
-        self.connect(self.cmod_2, (self.tx_out_selector, 2))
-        # gui connection selector
-        # self.connect(self.cmod_0, (self.tx_gui_selector, 0))
-        # self.connect(self.cmod_1, (self.tx_gui_selector, 1))
-        # self.connect(self.cmod_2, (self.tx_gui_selector, 2))
-        # self.connect(self.tx_gui_selector, self.qtgui_time_sink_x_0)
-        # one output selector connection to throttle (will replace throttle wtih sdr sink block)
-        self.connect(self.tx_out_selector, self.throttle)
-
+        self.connect(self.cmod_0, self.throttle)
 
         # RX Chain
-        self.connect(self.throttle, self.rx_in_selector)
-        # RX decode chain selection
-        self.connect((self.rx_in_selector, 0), self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0)
-        self.connect((self.rx_in_selector, 1), self.pfb_1, self.cl_1, self.cdecode_1, self.diffd_1, self.unpack_1)
-        self.connect((self.rx_in_selector, 2), self.pfb_2, self.cl_2, self.cdecode_2, self.diffd_2, self.unpack_2)
-        # unpack outputs connection to rx output selector
-        self.connect(self.unpack_0, (self.rx_out_selector, 0))
-        self.connect(self.unpack_1, (self.rx_out_selector, 1))
-        self.connect(self.unpack_2, (self.rx_out_selector, 2))
-        # output selector to destination
-        self.connect(self.rx_out_selector, self.destination)
-        # gui connection selector
-        self.connect(self.cl_0, (self.rx_gui_selector, 0))
-        self.connect(self.cl_1, (self.rx_gui_selector, 1))
-        self.connect(self.cl_2, (self.rx_gui_selector, 2))
-        # self.connect(self.rx_gui_selector, self.qtgui_time_sink_x_1)
-        self.connect(self.rx_gui_selector, self.constellation_plot)
+        self.connect(self.throttle, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0)
+        
+        self.connect(self.unpack_0, self.destination)
+        self.connect(self.cl_0, self.constellation_plot)
 
 
+
+    def _connect_chain(self, mode):
+        print(f'[genMDsim] Connecting {self.mod_strs[mode]} chain...', )
+        # TX Blocks
+        mod = self.cmods[mode]
+        # RX Blocks
+        pfb = self.pfbs[mode]
+        cl = self.costasls[mode]
+        decode = self.cdecodes[mode]
+        diffd = self.diffds[mode]
+        unpack = self.unpacks[mode]
+
+        # TX Chain
+        self.connect(self.source, mod, self.throttle)
+        # RX Chain
+        self.connect(self.throttle, pfb, cl, decode, diffd, unpack, self.destination)
+        self.connect(cl, self.constellation_plot)
+        print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
+
+    def _disconnection_chain(self, mode):
+        print(f'[genMDsim] Disconnecting {self.mod_strs[mode]} chain...')
+        # TX Block
+        mod = self.cmods[mode]
+        # RX Blocks
+        pfb = self.pfbs[mode]
+        cl = self.costasls[mode]
+        decode = self.cdecodes[mode]
+        diffd = self.diffds[mode]
+        unpack = self.unpacks[mode]
+
+        # TX Chain
+        self.disconnect(self.source, mod, self.throttle)
+        # RX Chain
+        self.disconnect(self.throttle, pfb, cl, decode, diffd, unpack, self.destination)
+        self.disconnect(cl, self.constellation_plot)
+        print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
     def switch_modulation(self, mode):
-        # self.tx_in_selector.set_output_index(mode)
-        self.tx_out_selector.set_input_index(mode)
-        self.rx_in_selector.set_output_index(mode)
-        self.rx_out_selector.set_input_index(mode)
-        # self.tx_gui_selector.set_input_index(mode)
-        self.rx_gui_selector.set_input_index(mode)
-        print(f"[genMDsim] switched modulation scheme to {['BPSK', 'QPSK', '16QAM'][mode]}")
+        print(f'[genMDsim] Swithcing modulation scheme from {self.mod_strs[self.current_mode]} to {self.mod_strs[mode]}')
+        if mode == self.current_mode:
+            return
+
+        self.lock()
+        self._disconnection_chain(self.current_mode)
+        self._connect_chain(mode)
+        self.current_mode=mode
+        self.unlock()
+        print(f"[genMDsim] switched modulation scheme to {self.mod_strs[mode]}")
  
 
     def getSDRgain(self):
@@ -462,13 +488,12 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         return self.sdr_RF_gain
 
 
-    def closeEvent(self, event):
+    def closeEvent(self, event=None):
         self.settings = Qt.QSettings("GNU Radio", "fil_Transfer_skeleton")
         self.settings.setValue("geometry", self.saveGeometry())
         self.stop()
         self.wait()
 
-        event.accept()
 
     def get_samp_rate(self):
         return self.samp_rate
@@ -530,15 +555,17 @@ def main(top_block_cls=fil_Transfer_skeleton, options=None):
     tb = top_block_cls()
 
     tb.start()
+    print(f'[GNURadio Main Thread] Started Thread')
 
     tb.show()
 
     def sig_handler(sig=None, frame=None):
-
-        tb.stop()
+        tb.source.perm_stop()
+        tb.closeEvent()
         tb.wait()
-
         Qt.QApplication.quit()
+        print(f'[GNURadio Main Thread] Stopped Thread')
+        sys.exit(0)
 
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
