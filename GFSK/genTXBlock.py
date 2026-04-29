@@ -319,5 +319,15 @@ class mav_packet_source(gr.sync_block):
 
         return n_requested
 
+    def perm_stop(self):
+        if self.sitl is not None:
+            self.sitl.perm_stop()
+        return
+    
     def stop(self):
-        self.sitl.stop()
+        if self.sitl is not None:
+            try:
+                self.sitl.stop()
+            except Exception as _:
+                pass
+        

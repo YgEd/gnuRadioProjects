@@ -335,6 +335,7 @@ class SITLManager:
         self._latest_telem = {}
         self._telem_lock   = threading.Lock()
         self._drain_thread: threading.Thread = None
+        self._perm_stop = False
 
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -377,38 +378,43 @@ class SITLManager:
 
     def stop(self):
         """Gracefully shut down worker process and optionally kill SITL."""
-        self._stop_event.set()
-
-        if self._sitl_proc is not None:
-            print("[SITLManager] Terminating sim_vehicle.py ...")
-            try:
-                # kill process
-                os.killpg(os.getpgid(self._sitl_proc.pid), signal.SIGTERM)
-                self._sitl_proc.wait(timeout=10)
-            except ProcessLookupError:
-                pass #process is already dead
-            except subprocess.TimeoutExpired:
-                # process didn't respond to SIGTERM so force it
-                os.killpg(os.getpgid(self._sitl_proc.pid), signal.SIGKILL)
-                self._sitl_proc.wait()
-            finally:
-                self._sitl_proc = None
         
-        # stop SITL STDOUT reader and telemetry drain thread
-        for t in self._threads:
-            t.join(timeout=10)
-        self._threads.clear()
+        if self._perm_stop:
+            
+            if self._sitl_proc is not None:
+                print("[SITLManager] Terminating sim_vehicle.py ...")
+                try:
+                    # kill process
+                    os.killpg(os.getpgid(self._sitl_proc.pid), signal.SIGTERM)
+                    self._sitl_proc.wait(timeout=10)
+                except ProcessLookupError:
+                    pass #process is already dead
+                except subprocess.TimeoutExpired:
+                    # process didn't respond to SIGTERM so force it
+                    os.killpg(os.getpgid(self._sitl_proc.pid), signal.SIGKILL)
+                    self._sitl_proc.wait()
+                finally:
+                    self._sitl_proc = None
+            
+            # stop SITL STDOUT reader and telemetry drain thread
+            for t in self._threads:
+                t.join(timeout=10)
+            self._threads.clear()
 
-        print("[SITLManager] Stopping...")
+            print("[SITLManager] Stopping...")
 
-        if self._mav_proc and self._mav_proc.is_alive():
-            self._mav_proc.join(timeout=5)
-            if self._mav_proc.is_alive():
-                self._mav_proc.kill()
-        print("[SITLManager] Resetting terminal settings")
-        self._restore_terminal()
+            if self._mav_proc and self._mav_proc.is_alive():
+                self._mav_proc.join(timeout=5)
+                if self._mav_proc.is_alive():
+                    self._mav_proc.kill()
+            print("[SITLManager] Resetting terminal settings")
+            self._restore_terminal()
 
-        print("[SITLManager] Stopped.")
+            print("[SITLManager] Stopped.")
+        
+        else:
+            # main thread is just stopped for a sec
+            print("[SITLManager] Temporary stop (lock/unlock) keeping SITL alive")
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -421,6 +427,11 @@ class SITLManager:
             #     return None
             # print(f"[SITLManager] Tried to get hearbeat but got error:\n{e}")
             return None
+
+    def perm_stop(self):
+        self._perm_stop = True
+        self.stop()
+
     
     def forward_packet(self, payload_bytes: bytes):
         """
