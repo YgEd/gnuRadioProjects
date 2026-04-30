@@ -165,7 +165,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
                 cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
                 transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
             ),
-            center_freq=-2500,    # in kHZ? adjust if you have a known freq offset
+            center_freq=0,    # in kHZ? adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
         )
 
@@ -245,7 +245,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # RX Chain
   
         # Main rx chain 
-        self.connect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
+        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
@@ -264,7 +264,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain removed
-        self.connect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
@@ -282,7 +282,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain
-        self.disconnect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+        self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
         self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
         self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)

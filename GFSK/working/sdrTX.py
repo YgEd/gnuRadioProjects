@@ -100,7 +100,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.bps_arr = [1, 2, 4]
         self.rso_arr = [2, 4, 16]
         # txgain selections based on modulation scheme as peak-to-average (PAPR) increases with modulation scheme do to RRC pulse shaping
-        self.gain_scale = [0.5, 0.4, 0.25]
+        self.gain_scale = [0.5, 0.35, 0.30]
         
 
 
