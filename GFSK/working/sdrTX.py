@@ -99,10 +99,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.rotational_sym_order = 2
         self.bps_arr = [1, 2, 4]
         self.rso_arr = [2, 4, 16]
-
-        # # TX selector: 1 input (source), 3 outputs for each modulation type
-        # self.tx_selector = blocks.selector(gr.sizeof_char, 0, 0)
-
+        # txgain selections based on modulation scheme as peak-to-average (PAPR) increases with modulation scheme do to RRC pulse shaping
+        self.gain_scale = [0.5, 0.4, 0.25]
         
 
 
@@ -162,6 +160,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         )
 
         self.tx_amplitude = blocks.multiply_const_cc(self.tx_gain_scalar)
+        
 
         ##################################################
         # Metrics Blocks
@@ -233,6 +232,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         print(f'[genMDsim] Connecting {self.mod_strs[mode]} chain...', )
         # TX Blocks
         mod = self.cmods[mode]
+        self.tx_amplitude.set_k(self.gain_scale[mode])
 
         # TX Chain
         self.connect(self.source, mod, self.tx_resampler, self.tx_amplitude, self.osmosdr_sink)

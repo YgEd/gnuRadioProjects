@@ -77,6 +77,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.fractional_bw = 0.49
         self.sdr_RF_gain = 35
         self.rx_decimation = 20
+        self.sps_wander = 0.05
 
         # modulation scheme selection variables
         self.current_mode = 0
@@ -117,9 +118,14 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.filter_bw = (2*np.pi)/100
 
         # Polyphase Clock Sync blocks
-        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
-        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
-        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
+        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, 
+            self.filter_bw, 
+            rrc_taps, nfilts, 
+            nfilts/2, 
+            self.sps_wander, # +/- how far the pfb can wander from base samples/symbol rate
+            1)
+        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
+        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
 
         # Differential Decoder blocks
         self.diffd_0 = digital.diff_decoder_bb(self.rso_arr[0], digital.DIFF_DIFFERENTIAL)
@@ -159,16 +165,17 @@ class modSwitcher(gr.top_block, Qt.QWidget):
                 cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
                 transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
             ),
-            center_freq=0,    # adjust if you have a known freq offset
+            center_freq=-2500,    # in kHZ? adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
         )
 
         self.agc = analog.agc2_cc(
-            attack_rate=1e-2,
+            attack_rate=5e-3,
             decay_rate=1e-3,
             reference=1.0,
             gain=1.0
         )
+        self.agc.set_max_gain(1000)
 
         # Strips off local oscillator frequency offset
         self.fll = digital.fll_band_edge_cc(
@@ -179,7 +186,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         )
 
         # Blocks DC spike from bladeRF
-        self.dc_blocker = filter.dc_blocker_cc(64, True)
+        self.dc_blocker = filter.dc_blocker_cc(256, True)
 
         ##################################################
         # Metrics Blocks
@@ -238,7 +245,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # RX Chain
   
         # Main rx chain 
-        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
+        self.connect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
@@ -257,7 +264,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain removed
-        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+        self.connect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
@@ -275,7 +282,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain
-        self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+        self.disconnect(self.osmosdr_source, self.dc_blocker, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
         self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
         self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)
