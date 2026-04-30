@@ -113,10 +113,13 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # RX Demod chains
         ##################################################
 
+        # filter bandwidths
+        self.filter_bw = (2*np.pi)/100
+
         # Polyphase Clock Sync blocks
-        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, 6.28/100, rrc_taps, nfilts, nfilts/2, 1.5, 1)
-        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, 6.28/100, rrc_taps, nfilts, nfilts/2, 1.5, 1)
-        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, 6.28/100, rrc_taps, nfilts, nfilts/2, 1.5, 1)
+        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
+        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
+        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, 1.5, 1)
 
         # Differential Decoder blocks
         self.diffd_0 = digital.diff_decoder_bb(self.rso_arr[0], digital.DIFF_DIFFERENTIAL)
@@ -124,9 +127,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.diffd_2 = digital.diff_decoder_bb(self.rso_arr[2], digital.DIFF_DIFFERENTIAL)
 
         # Costas loop blocks
-        self.cl_0 = digital.costas_loop_cc((6.28/100), self.rso_arr[0], False)
-        self.cl_1 = digital.costas_loop_cc((6.28/100), self.rso_arr[1], False)
-        self.cl_2 = digital.costas_loop_cc((6.28/100), self.rso_arr[2], False)
+        self.cl_0 = digital.costas_loop_cc((self.filter_bw), self.rso_arr[0], False)
+        self.cl_1 = digital.costas_loop_cc((self.filter_bw), self.rso_arr[1], False)
+        self.cl_2 = digital.costas_loop_cc((self.filter_bw), self.rso_arr[2], False)
 
         # Constellation decoder blocks
         self.cdecode_0 = digital.constellation_decoder_cb(self.bpsk_obj)
@@ -167,6 +170,17 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             gain=1.0
         )
 
+        # Strips off local oscillator frequency offset
+        self.fll = digital.fll_band_edge_cc(
+            self.samples_per_symbol,  # sps at FLL input
+            0.35,                      # rolloff (must match your TX RRC alpha)
+            44,                        # filter size
+            (2 * 3.14159 / 100)        # loop BW
+        )
+
+        # Blocks DC spike from bladeRF
+        self.dc_blocker = filter.dc_blocker_cc(64, True)
+
         ##################################################
         # Metrics Blocks
 
@@ -202,8 +216,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_center_freq(self.center_freq, 0)
         self.osmosdr_source.set_antenna('RX1', 0)
         self.osmosdr_source.set_freq_corr(0, 0)
-        self.osmosdr_source.set_dc_offset_mode(0, 0)
-        self.osmosdr_source.set_iq_balance_mode(0, 0)
+        self.osmosdr_source.set_dc_offset_mode(0, 0) # automatic DC correction
+        self.osmosdr_source.set_iq_balance_mode(0, 0) # automatic
         self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
         self.osmosdr_source.set_if_gain(15, 0)
         self.osmosdr_source.set_bb_gain(15, 0)
@@ -215,6 +229,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # self.time_sink = self.qtguis.getTimeSink("TX Output")
         self.freq_sink = self.qtguis.getFreqSink(self.center_freq, self.sdr_samp_rate, "RX Input")
         self.constellation_plot = self.qtguis.getConstellation("RX Recovered Symbols")
+        self.filtered_plot = self.qtguis.getConstellation("Filtered Symbols")
 
         ##################################################
         # Connections
@@ -223,10 +238,11 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # RX Chain
   
         # Main rx chain 
-        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
+        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
+        self.connect(self.cl_0, self.filtered_plot)
 
 
         
@@ -241,10 +257,11 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain removed
-        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, pfb, cl, decode, diffd, unpack, self.destination)
+        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.connect(self.rx_resampler_lowpass, self.metrics_probe)
         self.connect(self.rx_resampler_lowpass, self.freq_sink)
         self.connect(self.rx_resampler_lowpass, self.constellation_plot)
+        self.connect(cl, self.filtered_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
 
     def _disconnection_chain(self, mode):
@@ -258,10 +275,11 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain
-        self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, pfb, cl, decode, diffd, unpack, self.destination)
+        self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
         self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
         self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
         self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)
+        self.disconnect(cl, self.filtered_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
     def switch_modulation(self, mode):

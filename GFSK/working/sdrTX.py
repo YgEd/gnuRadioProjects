@@ -76,7 +76,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.tx_interpolation = 20
         self.tx_decimation = 1
         self.fractional_bw = 0.49
-        self.tx_gain_scalar = 1
+        self.tx_gain_scalar = 0.5
         self.sdr_RF_gain = 35
 
         # modulation scheme selection variables
@@ -103,15 +103,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # # TX selector: 1 input (source), 3 outputs for each modulation type
         # self.tx_selector = blocks.selector(gr.sizeof_char, 0, 0)
 
-        # global rrc_taps block
-        nfilts = 32
-        rrc_taps = firdes.root_raised_cosine(
-            nfilts, #gain (= nfilts for polyphase)
-            nfilts,# sampling rate
-            1.0 /float(self.sps), # normalized symbol rate
-            0.35, #excess BW
-            11 * self.sps * nfilts #num of taps
-        )
+        
+
+
 
         ##################################################
         # TX Mod chains
@@ -154,6 +148,20 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
         # put tx blocsk in a mode ordered array
         self.cmods = [self.cmod_0, self.cmod_1, self.cmod_2]
+
+#       #################################################
+        # DSP Blocks
+        # global rrc_taps block
+        nfilts = 32
+        rrc_taps = firdes.root_raised_cosine(
+            nfilts, #gain (= nfilts for polyphase)
+            nfilts,# sampling rate
+            1.0 /float(self.sps), # normalized symbol rate
+            0.35, #excess BW
+            11 * self.sps * nfilts #num of taps
+        )
+
+        self.tx_amplitude = multiply_const_cc(self.tx_gain_scalar)
 
         ##################################################
         # Metrics Blocks
@@ -215,9 +223,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # modulation selector
         self.connect(self.source, self.cmod_0)
         self.connect(self.cmod_0, self.tx_resampler)
-        self.connect(self.tx_resampler, self.osmosdr_sink)
-        self.connect(self.tx_resampler, self.metrics_probe)
-        self.connect(self.tx_resampler, self.freq_sink)
+        self.connect(self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
+        self.connect(self.tx_gain_scalar, self.metrics_probe)
+        self.connect(self.tx_gain_scalar, self.freq_sink)
 
 
         
@@ -227,9 +235,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         mod = self.cmods[mode]
 
         # TX Chain
-        self.connect(self.source, mod, self.tx_resampler, self.osmosdr_sink)
-        self.connect(self.tx_resampler, self.metrics_probe)
-        self.connect(self.tx_resampler, self.freq_sink)
+        self.connect(self.source, mod, self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
+        self.connect(self.tx_gain_scalar, self.metrics_probe)
+        self.connect(self.tx_gain_scalar, self.freq_sink)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
 
     def _disconnection_chain(self, mode):
@@ -238,9 +246,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         mod = self.cmods[mode]
 
         # TX Chain
-        self.disconnect(self.source, mod, self.tx_resampler, self.osmosdr_sink)
-        self.disconnect(self.tx_resampler, self.metrics_probe)
-        self.disconnect(self.tx_resampler, self.freq_sink)
+        self.disconnect(self.source, mod, self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
+        self.disconnect(self.tx_gain_scalar, self.metrics_probe)
+        self.disconnect(self.tx_gain_scalar, self.freq_sink)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
     def switch_modulation(self, mode):
