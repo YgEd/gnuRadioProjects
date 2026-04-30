@@ -26,16 +26,14 @@ import sip
 import numpy as np
 import threading
 
-sys.path.append('../GFSK')
-
-
+# Created Custom Python blocks
 from genTXBlock import mav_packet_source
 from rf_metrics import RFMetricsProbe, MetricsLogger
 from rxBlock import mav_packet_reader_with_metrics
 
 
 
-class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
+class modSwitcher(gr.top_block, Qt.QWidget):
 
     def __init__(self, mod='bpsk'):
         gr.top_block.__init__(self, "Not titled yet", catch_exceptions=True)
@@ -58,7 +56,7 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
         self.top_grid_layout = Qt.QGridLayout()
         self.top_layout.addLayout(self.top_grid_layout)
 
-        self.settings = Qt.QSettings("GNU Radio", "fil_Transfer_skeleton")
+        self.settings = Qt.QSettings("GNU Radio", "modSwitcher")
 
         try:
             geometry = self.settings.value("geometry")
@@ -489,7 +487,7 @@ class fil_Transfer_skeleton(gr.top_block, Qt.QWidget):
 
 
     def closeEvent(self, event=None):
-        self.settings = Qt.QSettings("GNU Radio", "fil_Transfer_skeleton")
+        self.settings = Qt.QSettings("GNU Radio", "modSwitcher")
         self.settings.setValue("geometry", self.saveGeometry())
         self.stop()
         self.wait()
@@ -548,7 +546,7 @@ def cli_loop(sig_handler, tb):
 
 
 
-def main(top_block_cls=fil_Transfer_skeleton, options=None):
+def main(top_block_cls=modSwitcher, options=None):
 
     qapp = Qt.QApplication(sys.argv)
 
