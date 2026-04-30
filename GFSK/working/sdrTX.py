@@ -161,7 +161,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             11 * self.sps * nfilts #num of taps
         )
 
-        self.tx_amplitude = multiply_const_cc(self.tx_gain_scalar)
+        self.tx_amplitude = blocks.multiply_const_cc(self.tx_gain_scalar)
 
         ##################################################
         # Metrics Blocks
@@ -223,9 +223,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # modulation selector
         self.connect(self.source, self.cmod_0)
         self.connect(self.cmod_0, self.tx_resampler)
-        self.connect(self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
-        self.connect(self.tx_gain_scalar, self.metrics_probe)
-        self.connect(self.tx_gain_scalar, self.freq_sink)
+        self.connect(self.tx_resampler, self.tx_amplitude, self.osmosdr_sink)
+        self.connect(self.tx_amplitude, self.metrics_probe)
+        self.connect(self.tx_amplitude, self.freq_sink)
 
 
         
@@ -235,9 +235,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         mod = self.cmods[mode]
 
         # TX Chain
-        self.connect(self.source, mod, self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
-        self.connect(self.tx_gain_scalar, self.metrics_probe)
-        self.connect(self.tx_gain_scalar, self.freq_sink)
+        self.connect(self.source, mod, self.tx_resampler, self.tx_amplitude, self.osmosdr_sink)
+        self.connect(self.tx_amplitude, self.metrics_probe)
+        self.connect(self.tx_amplitude, self.freq_sink)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
 
     def _disconnection_chain(self, mode):
@@ -246,9 +246,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         mod = self.cmods[mode]
 
         # TX Chain
-        self.disconnect(self.source, mod, self.tx_resampler, self.tx_gain_scalar, self.osmosdr_sink)
-        self.disconnect(self.tx_gain_scalar, self.metrics_probe)
-        self.disconnect(self.tx_gain_scalar, self.freq_sink)
+        self.disconnect(self.source, mod, self.tx_resampler, self.tx_amplitude, self.osmosdr_sink)
+        self.disconnect(self.tx_amplitude, self.metrics_probe)
+        self.disconnect(self.tx_amplitude, self.freq_sink)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
     def switch_modulation(self, mode):
