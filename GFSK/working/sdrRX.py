@@ -123,9 +123,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             rrc_taps, nfilts, 
             nfilts/2, 
             self.sps_wander, # +/- how far the pfb can wander from base samples/symbol rate
-            1)
-        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
-        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
+            self.sps)
+        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
+        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
 
         # Differential Decoder blocks
         self.diffd_0 = digital.diff_decoder_bb(self.rso_arr[0], digital.DIFF_DIFFERENTIAL)
