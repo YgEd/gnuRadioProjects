@@ -108,7 +108,7 @@ class MetricsLogger:
         self._baseline_freq_hz = None
         self.headers = [
             # Original measurement fields
-            'timestamp', 'tx_rx', 'gain', 'frequency', 'modulation', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            'timestamp', 'tx_rx', 'gain', 'frequency', 'modulation', 'RSSI', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
             # Discretized / derived fields
             'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'failure_level','packet_success',
             # Detailed packet info fields
@@ -140,6 +140,7 @@ class MetricsLogger:
                 gain        INTEGER,
                 frequency   REAL,
                 modulation  TEXT,
+                RSSI        REAL,
                 snr_db      REAL,
                 noise_floor_dbm     REAL,
                 freq_offset_hz      REAL,

@@ -272,11 +272,18 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain removed
-        self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
-        self.connect(self.rx_resampler_lowpass, self.metrics_probe)
-        self.connect(self.rx_resampler_lowpass, self.freq_sink)
-        self.connect(self.rx_resampler_lowpass, self.constellation_plot)
-        self.connect(cl, self.filtered_plot)
+        if mode == self.mod_strs[2]:
+            self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, decode, diffd, unpack, self.destination)
+            self.connect(self.rx_resampler_lowpass, self.metrics_probe)
+            self.connect(self.rx_resampler_lowpass, self.freq_sink)
+            self.connect(self.rx_resampler_lowpass, self.constellation_plot)
+            self.connect(cl, self.filtered_plot)
+        else:
+            self.connect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+            self.connect(self.rx_resampler_lowpass, self.metrics_probe)
+            self.connect(self.rx_resampler_lowpass, self.freq_sink)
+            self.connect(self.rx_resampler_lowpass, self.constellation_plot)
+            self.connect(cl, self.filtered_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
 
     def _disconnection_chain(self, mode):
@@ -290,11 +297,18 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
 
         # RX Chain
-        self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
-        self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
-        self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
-        self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)
-        self.disconnect(cl, self.filtered_plot)
+        if mode == self.mod_strs[2]:
+            self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, decode, diffd, unpack, self.destination)
+            self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
+            self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
+            self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)
+            self.disconnect(cl, self.filtered_plot)
+        else:
+            self.disconnect(self.osmosdr_source, self.rx_resampler_lowpass, self.agc, self.fll, pfb, cl, decode, diffd, unpack, self.destination)
+            self.disconnect(self.rx_resampler_lowpass, self.metrics_probe)
+            self.disconnect(self.rx_resampler_lowpass, self.freq_sink)
+            self.disconnect(self.rx_resampler_lowpass, self.constellation_plot)
+            self.disconnect(cl, self.filtered_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
     def switch_modulation(self, mode):
