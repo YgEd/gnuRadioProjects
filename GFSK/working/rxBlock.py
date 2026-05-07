@@ -195,7 +195,9 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'raw_payload_bytes': bytearray(0),
                                 'whitened_payload_bytes': bytearray(0),
                                 'raw_packet_bytes': bytearray(0),
-                                'message': 'Length field FEC decode failed (CRC-8 mismatch after Viterbi)'
+                                'message': 'Length field FEC decode failed (CRC-8 mismatch after Viterbi)',
+                                'failure_level': 'CRC payload length mismatch failure'
+                                
                             }
                             self.metrics_logger.log_packet_outcome(
                                 'RX', self.freq, packet_info,
@@ -235,7 +237,7 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                             deinterleaved, n_data_bits=n_data_bits
                         )
                     except Exception as e:
-                        print(f"[GNURXBlock] Viterbi decode error: {e}")
+                        print(f"[GNURXBlock] FEC Viterbi decode error: {e}")
                         ber = self._estimate_ber(success=False)
                         if self.metrics_logger:
                             packet_info = {
@@ -245,7 +247,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'raw_payload_bytes': bytearray(0),
                                 'whitened_payload_bytes': bytearray(0),
                                 'raw_packet_bytes': bytearray(0),
-                                'message': f'Viterbi decode failed: {e}'
+                                'message': f'FEC Viterbi decode failed: {e}',
+                                'failure_level': 'FEC payload decode failure'
                             }
                             self.metrics_logger.log_packet_outcome(
                                 'RX', self.freq, packet_info,
@@ -286,7 +289,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                                 'payload_len_crc': bytearray([crc8(self.length_bytes)]),
                                 'payload_crc': bytearray(received_crc_bytes),
                                 'raw_packet_bytes': packet_bytes,
-                                'message': f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}'
+                                'message': f'Payload CRC Failed: got {received_crc_val:#x} expected {expected_crc_val:#x}',
+                                'failure_level': 'CRC payload mismatch failure'
                             }
                             self.metrics_logger.log_packet_outcome(
                                 'RX', self.freq, packet_info,
@@ -316,7 +320,8 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                             'payload_len_crc': bytearray([crc8(self.length_bytes)]),
                             'payload_crc': bytearray(received_crc_bytes),
                             'raw_packet_bytes': packet_bytes,
-                            'message': msg
+                            'message': msg,
+                            'failure_level': 'N/A'
                         }
                         self.metrics_logger.log_packet_outcome(
                             'RX', self.freq, packet_info,

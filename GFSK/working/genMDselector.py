@@ -364,7 +364,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         ##################################################
         # Metrics Blocks
 
-        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
+        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain, getMod=self.getMod, direction='RX')
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,
@@ -378,7 +378,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # Mav Source and Destination Blocks
         self.source = mav_packet_source(
             self.center_freq, self.setSDRGain, None,
-            metrics_logger=self.metrics_logger,
+            metrics_logger=None,
             packed=True
         )
 
@@ -423,7 +423,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
         # RX Chain
         self.connect(self.throttle, self.pfb_0, self.cl_0, self.cdecode_0, self.diffd_0, self.unpack_0)
-        
+        self.connect(self.throttle, self.metrics_probe)
         self.connect(self.unpack_0, self.destination)
         self.connect(self.cl_0, self.constellation_plot)
 
@@ -444,6 +444,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.connect(self.source, mod, self.throttle)
         # RX Chain
         self.connect(self.throttle, pfb, cl, decode, diffd, unpack, self.destination)
+        self.connect(self.throttle, self.metrics_probe)
         self.connect(cl, self.constellation_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain connected!')
 
@@ -462,6 +463,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.disconnect(self.source, mod, self.throttle)
         # RX Chain
         self.disconnect(self.throttle, pfb, cl, decode, diffd, unpack, self.destination)
+        self.disconnect(self.throttle, self.metrics_probe)
         self.disconnect(cl, self.constellation_plot)
         print(f'[genMDsim] {self.mod_strs[mode]} Chain disconnected!')
 
@@ -478,6 +480,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         print(f"[genMDsim] switched modulation scheme to {self.mod_strs[mode]}")
  
 
+    def getMod(self):
+        return self.mod_strs[self.current_mode]
+
     def getSDRgain(self):
         return self.sdr_RF_gain
 
@@ -489,6 +494,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
     def closeEvent(self, event=None):
         self.settings = Qt.QSettings("GNU Radio", "modSwitcher")
         self.settings.setValue("geometry", self.saveGeometry())
+        self.metrics_logger.close()
         self.stop()
         self.wait()
 

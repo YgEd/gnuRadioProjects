@@ -78,9 +78,11 @@ class MetricsLogger:
     metrics from mav_packet_reader, merges them, and writes to CSV.
     """
 
-    def __init__(self, getGain, log_dir='packet-logs'):
+    def __init__(self, getGain, getMod, direction, log_dir='packet-logs'):
         self.log_dir = log_dir
         self.getGain = getGain
+        self.getMod = getMod
+        self.direction = direction
         os.makedirs(log_dir, exist_ok=True)
 
         now = datetime.datetime.now().isoformat()
@@ -104,9 +106,9 @@ class MetricsLogger:
         self._baseline_freq_hz = None
         self.headers = [
             # Original measurement fields
-            'timestamp', 'tx_rx', 'gain', 'frequency', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
+            'timestamp', 'tx_rx', 'gain', 'frequency', 'modulation', 'snr_db', 'noise_floor_dbm', 'freq_offset_hz', 'doppler_hz', 'jitter_ns', 'ber',
             # Discretized / derived fields
-            'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'packet_success',
+            'snr_bin', 'channelnoise_bin', 'freq_offset_bin', 'doppler_bin', 'jitter_bin', 'ber_bin', 'failure_level','packet_success',
             # Detailed packet info fields
             'message', 'payload_len', 'payload_len_crc', 'payload_crc',
             'raw_payload_bytes', 'whitened_payload_bytes', 'raw_packet_bytes'
@@ -128,13 +130,14 @@ class MetricsLogger:
 
         print('[MetricLogger] Successfully connected to db, writing to db...')
         
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS metrics (
+        conn.execute(f"""
+            CREATE TABLE IF NOT EXISTS {self.direction}_metrics (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp   TEXT,
                 tx_rx       TEXT,
                 gain        INTEGER,
                 frequency   REAL,
+                modulation  TEXT,
                 snr_db      REAL,
                 noise_floor_dbm     REAL,
                 freq_offset_hz      REAL,
@@ -147,7 +150,8 @@ class MetricsLogger:
                 doppler_bin         TEXT,
                 jitter_bin          TEXT,
                 ber_bin             TEXT,
-                packet_success      BOOL,
+                failure_level      TEXT,
+                packet_success      TEXT,
                 message         TEXT,
                 payload_len         INTEGER,
                 payload_len_crc     INTEGER,
@@ -264,6 +268,7 @@ class MetricsLogger:
             'tx_rx': TXRX,
             'gain': self.getGain(),
             'frequency': freq,
+            'modulation': self.getMod(),
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
             'freq_offset_hz': m.get('freq_offset_hz'),
@@ -271,7 +276,6 @@ class MetricsLogger:
             'jitter_ns': m.get('jitter_ns'),
             'ber': ber,
         })
-
 
         # Step 4: populate discretized fields if measurements available
         if all(v is not None for v in m.values()):
@@ -282,6 +286,7 @@ class MetricsLogger:
                 'doppler_bin': bin_doppler(m['doppler_hz']),
                 'jitter_bin': bin_jitter(m['jitter_ns']),
                 'ber_bin': bin_ber(ber),
+                'failure_level': packet_info['failure_level'],
                 'packet_success': 'success' if success else 'failure'
             })
         else:
@@ -292,6 +297,7 @@ class MetricsLogger:
                 'doppler_bin': 'unknown',
                 'jitter_bin': 'unknown',
                 'ber_bin': 'unknown',
+                'crc'
                 'packet_success': False
             })
 

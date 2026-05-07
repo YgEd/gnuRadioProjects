@@ -175,7 +175,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         ##################################################
         # Metrics Blocks
 
-        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain)
+        self.metrics_logger = MetricsLogger(getGain=self.getSDRgain, getMod=self.getMod, direction='TX')
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,
@@ -263,6 +263,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.unlock()
         print(f"[genMDsim] switched modulation scheme to {self.mod_strs[mode]}")
  
+    def getMod(self):
+        return self.mod_strs[self.current_mode]
 
     def getSDRgain(self):
         return self.sdr_RF_gain

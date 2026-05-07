@@ -252,6 +252,7 @@ class mav_packet_source(gr.sync_block):
             'payload_len_crc': bytearray([len_crc_byte]),
             'payload_crc': bytearray([payload_crc_val >> 8, payload_crc_val & 0xFF]),
             'raw_packet_bytes': bytearray(np.packbits(packet_for_log).tolist()),
+            'failure_level': 'N/A',
             'message': msg
         }
 
