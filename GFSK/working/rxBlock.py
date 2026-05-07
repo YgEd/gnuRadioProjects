@@ -39,8 +39,9 @@ class mav_packet_reader_with_metrics(gr.sync_block):
     # MAVLink COMMAND_LONG is 33 bytes = 264 bits
     # Use as N in PER->BER conversion: BER = 1 - (1-PER)^(1/N)
     PACKET_LENGTH_BITS = 264
+    THRESHOLD_BW = (2*np.pi)/100
 
-    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080, varygain=False):
+    def __init__(self, freq, setSDRGain=None, metrics_logger=None, publish_to_gcs=False, host='127.0.0.1', port=8080, pfb=None, cl=None, varygain=False):
         gr.sync_block.__init__(
             self,
             name="MavLink Packet Reader (Metrics)",
@@ -73,6 +74,15 @@ class mav_packet_reader_with_metrics(gr.sync_block):
         self.time_since_gain_change = time.time()
         self.gain_index = 0
 
+        # set loop bandwidth for polyphase PLL and costas PLL
+        self.pfb = pfb
+        self.cl = cl
+        self.time_since_sync = None
+
+        self.packets_arr = []
+
+
+
         # self.sitl = sitl.SITLManager()
         # print("Attempting to connect to SITL...")
         # self.sitl.start()
@@ -100,6 +110,14 @@ class mav_packet_reader_with_metrics(gr.sync_block):
             if self.sitl is not None:
                 self.sitl.stop()
         return True
+
+    def setpfb(self, pfb):
+        self.pfb = pfb
+        return self.pfb
+
+    def setcl(self, cl):
+        self.cl = cl
+        return self.cl
     
     def __del__(self):
         try:
@@ -153,6 +171,31 @@ class mav_packet_reader_with_metrics(gr.sync_block):
 
     def work(self, input_items, output_items):
 
+        # narrow bandwidth if two syc words are found in a row
+        now = time.time()
+        
+        # haven't seen sync in 2 seconds
+        if self.time_since_sync is not None and self.time_since_sync + 5 < now:
+            pfb_bw = self.pfb.loop_bandwidth()
+            if round(self.THRESHOLD_BW/2 ,3) == round(pfb_bw,3):
+                self.pfb.set_loop_bandwidth(pfb_bw*2)
+                print(f'[rxBlock] No sync word seen in {now - self.time_since_sync}s increased pfb loop bandwidth to {self.pfb.loop_bandwidth()}')
+
+        if len(self.packets_arr) == 2:
+            if all(self.packets_arr):
+                pfb_bw = self.pfb.loop_bandwidth()
+                if round(self.THRESHOLD_BW,3) == round(pfb_bw,3):
+                    # two successful packest in a row
+                    self.pfb.set_loop_bandwidth(pfb_bw/2)
+                    print(f'[rxBlock] reduced pfb loop bandwidth to {self.pfb.loop_bandwidth()}')
+            else:
+                if round(self.THRESHOLD_BW / 2,3) == round(self.pfb.loop_bandwidth(),3):
+                    pfb_bw = self.pfb.loop_bandwidth()
+                    self.pfb.set_loop_bandwidth(pfb_bw*2)
+                    print(f'[rxBlock] increased pfb loop bandwidth to {self.pfb.loop_bandwidth()}')
+            
+            self.packets_arr = []
+
         if self.varygain:
             self.gainSetter()
         in_data = input_items[0]
@@ -165,6 +208,10 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     tail = self.bit_buffer[-self.sync_len:]
                     if np.array_equal(tail, self.sync_word):
                         print("[GNURXBlock] sync word found!")
+
+                        # reset self.time_since_sync
+                        self.time_since_sync = time.time()
+
                         self.bit_buffer   = []
                         self.state        = 'READ_LENGTH'
                         self.constructed_bits = list(self.sync_word)
@@ -186,6 +233,9 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                     if not len_valid:
                         print(f"{Colors.RED}[GNURXBlock] Length field FEC decode FAILED{Colors.RESET}")
                         ber = self._estimate_ber(success=False)
+
+                        # APPEND False to packets_arr
+                        self.packets_arr.append(False)
 
                         if self.metrics_logger:
                             packet_info = {
@@ -237,8 +287,12 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                             deinterleaved, n_data_bits=n_data_bits
                         )
                     except Exception as e:
-                        print(f"[GNURXBlock] FEC Viterbi decode error: {e}")
+                        print(f"{colors.RED}[GNURXBlock] Viterbi decode error: {e}{colors.RESET}")
                         ber = self._estimate_ber(success=False)
+
+                        # APPEND False to packets_arr
+                        self.packets_arr.append(False)
+
                         if self.metrics_logger:
                             packet_info = {
                                 'payload_len': self.payload_len,
@@ -281,6 +335,9 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         print(f"{Colors.RED}[GNURXBlock] Payload CRC FAILED: got {received_crc_val:#x}, expected {expected_crc_val:#x} {Colors.RESET}")
                         ber = self._estimate_ber(success=False)
 
+                        # APPEND False to packets_arr
+                        self.packets_arr.append(False)
+
                         if self.metrics_logger:
                             packet_info = {
                                 'raw_payload_bytes': bytearray(payload_bytes),
@@ -311,7 +368,10 @@ class mav_packet_reader_with_metrics(gr.sync_block):
                         msg = mav.parse_char(payload_bytes)
                     except Exception as e:
                         print(f"[GNURXBlock] Error when converting payload bytes to mavlink string: {e}")
-
+                    
+                    # APPEND SUCCESS TO self.packets_arr
+                    self.packets_arr.append(True)
+                    
                     if self.metrics_logger:
                         packet_info = {
                             'raw_payload_bytes': bytearray(payload_bytes),

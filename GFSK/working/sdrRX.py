@@ -62,9 +62,10 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # Variables
         ##################################################
 
-        self.symbol_rate = 500e3
-        self.sdr_samp_rate = 4e6
-        self.sps = sps = int(self.sdr_samp_rate / self.symbol_rate)
+        self.samp_rate = 100e3
+        self.sdr_samp_rate = 2e6
+        self.symbol_rate = 25000
+        self.sps = sps = int(self.samp_rate / self.symbol_rate)
         self.samp_rate = samp_rate = int(self.symbol_rate * self.sps)
         self.rx_decimation = int(self.sdr_samp_rate/samp_rate)
 
@@ -104,11 +105,11 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # global rrc_taps block
         nfilts = 32
         rrc_taps = firdes.root_raised_cosine(
-            1, #gain (= nfilts for polyphase)
-            self.samp_rate,# sampling rate
-            self.symbol_rate, # normalized symbol rate
+            nfilts, #gain (= nfilts for polyphase)
+            nfilts,# sampling rate
+            1.0 /float(self.sps), # normalized symbol rate
             0.35, #excess BW
-            nfilts #num of taps
+            11 * self.sps * nfilts #num of taps
         )
 
         ##################################################
@@ -126,8 +127,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             nfilts/2, 
             self.sps_wander, # +/- how far the pfb can wander from base samples/symbol rate
             1)
-        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
-        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
+        self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw*1/50, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
+        self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, 1)
 
         # Differential Decoder blocks
         self.diffd_0 = digital.diff_decoder_bb(self.rso_arr[0], digital.DIFF_DIFFERENTIAL)
@@ -164,8 +165,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             taps=firdes.low_pass(
                 gain=1,
                 sampling_freq=self.sdr_samp_rate,
-                cutoff_freq=self.symbol_rate * (1 + self.bt) * 1.25,
-                transition_width=self.symbol_rate * (1 + self.bt) * 0.25
+                cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
+                transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
             ),
             center_freq=0,    # in kHZ? adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
@@ -184,7 +185,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             self.sps,  # sps at FLL input
             0.35,                      # rolloff (must match your TX RRC alpha)
             44,                        # filter size
-            (2 * 3.14159 / 100)        # loop BW
+            (2 * np.pi / 100)        # loop BW
         )
 
         # Blocks DC spike from bladeRF
@@ -211,6 +212,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             metrics_logger=self.metrics_logger,
             publish_to_gcs=True,
             host="192.168.0.255",
+            pfb=self.pfb_0,
+            cl=self.cl_0,
             port=8080
         )
 
@@ -263,6 +266,9 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         decode = self.cdecodes[mode]
         diffd = self.diffds[mode]
         unpack = self.unpacks[mode]
+        self.destination.setpfb(pfb)
+        self.destination.setcl(cl)
+        
 
 
         # RX Chain removed
