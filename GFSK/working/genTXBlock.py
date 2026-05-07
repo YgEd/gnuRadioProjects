@@ -269,21 +269,21 @@ class mav_packet_source(gr.sync_block):
             self.send_message(msg.pack(self._mav))
             self._time_since_hb = int(time.time())
 
-        # if msg.get_type() == 'STATUSTEXT':
-        #     print(f"[genTXBlock] Sending {msg.get_type()} Message")
-        #     self.send_message(msg.pack(self._mav))
+        if msg.get_type() == 'STATUSTEXT':
+            print(f"{Colors.YELLOW}[genTXBlock] Sending {msg.get_type()} Message{Colors.RESET}")
+            self.send_message(msg.pack(self._mav))
 
-        # if msg.get_type() == 'GLOBAL_POSITION_INT':
-        #     if self._time_since_gps + 2 < curr_time:
-        #         print(f"[genTXBlock] Sending {msg.get_type()} Message")
-        #         self.send_message(msg.pack(self._mav))
-        #         self._time_since_gps = int(time.time())
+        if msg.get_type() == 'GLOBAL_POSITION_INT':
+            if self._time_since_gps + 2 < curr_time:
+                print(f"{Colors.YELLOW}[genTXBlock] Sending {msg.get_type()} Message{Colors.RESET}")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_gps = int(time.time())
 
-        # if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
-        #     if self._time_since_telem + 5 < curr_time:
-        #         print(f"[genTXBlock] Sending {msg.get_type()} Message")
-        #         self.send_message(msg.pack(self._mav))
-        #         self._time_since_telem = int(time.time())
+        if (not msg.get_type() == 'HEARTBEAT') and (not msg.get_type() == 'GLOBAL_POSITION_INT'):
+            if self._time_since_telem + 5 < curr_time:
+                print(f"{Colors.YELLOW}[genTXBlock] Sending {msg.get_type()} Message{Colors.RESET}")
+                self.send_message(msg.pack(self._mav))
+                self._time_since_telem = int(time.time())
 
     def setGain(self, curr_time):
         gain_set = None

@@ -68,7 +68,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.center_freq = 915e6
 
         self.sensitivity = 0.785   # h=0.5
-        self.bt = 0.5
+        self.bt = 0.35
         self.gain_mu = 0.08
         self.mu = 0.5
         self.omega_relative_limit = 0.02
