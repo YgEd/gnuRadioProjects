@@ -101,6 +101,7 @@ class MetricsLogger:
             'freq_offset_hz':    None,
             'doppler_hz':        None,
             'jitter_ns':         None,
+            'RSSI': None,
         }
 
         # Static baseline freq for Doppler calculation.
@@ -224,11 +225,12 @@ class MetricsLogger:
             writer.writerow(self.headers)
 
     def update_iq_metrics(self, snr_db, noise_floor_dbm,
-                          freq_offset_hz, doppler_hz, jitter_ns):
+                          freq_offset_hz, doppler_hz, jitter_ns, rssi):
         """Called by RFMetricsProbe each processing window."""
         with self._lock:
             self._iq_metrics = {
                 'snr_db':          snr_db,
+                'RSSI': rssi,
                 'noise_floor_dbm': noise_floor_dbm,
                 'freq_offset_hz':  freq_offset_hz,
                 'doppler_hz':      doppler_hz,
@@ -271,6 +273,7 @@ class MetricsLogger:
             'tx_rx': TXRX,
             'gain': self.getGain(),
             'frequency': freq,
+            'RSSI': m.get('RSSI'),
             'modulation': self.getMod(),
             'snr_db': m.get('snr_db'),
             'noise_floor_dbm': m.get('noise_floor_dbm'),
@@ -381,17 +384,23 @@ class RFMetricsProbe(gr.sync_block):
 
     WINDOW_SIZE = 4096   # samples per measurement window at 100 kHz
 
-    def __init__(self, samp_rate, samples_per_symbol, center_freq, logger, sensitivity=0):
+    def __init__(self, samp_rate, samples_per_symbol, center_freq=0.0, logger=None, excess_bw=0.35, sensitivity=None, cal_offset_dbm=None, total_sdr_gain_db=0.0):
         gr.sync_block.__init__(
             self,
             name='RFMetricsProbe',
             in_sig=[np.complex64],
             out_sig=None               # sink block — no output
         )
-        self.samp_rate          = samp_rate
-        self.samples_per_symbol = samples_per_symbol
+        self.samp_rate          = float(samp_rate)
+        self.samples_per_symbol = float(samples_per_symbol)
+        self.symbol_rate        = self.samp_rate / self.samples_per_symbol
         self.center_freq        = center_freq
         self.logger             = logger
+        self.excess_bw          = excess_bw
+        self.signal_bw_hz       = self.symbol_rate * (1.0 + excess_bw)
+        self.cal_offset_dbm     = cal_offset_dbm
+        self.total_sdr_gain_db  = total_sdr_gain_db
+        self._freq_history      = deque(maxlen=200)
         self.sensitivity = sensitivity
 
         self._buffer     = []
@@ -400,59 +409,68 @@ class RFMetricsProbe(gr.sync_block):
         # Running list of peak frequencies for Doppler baseline estimation
         self._freq_history = deque(maxlen=50)
 
+    def _estimate_rssi(self, samples):
+        """
+        Average received power across the analysis bandwidth.
+        Returns (rssi, units) where units is 'dBm' if calibrated, else 'dBFS'.
+        """
+        if len(samples) == 0:
+            return None, None
+
+        power_lin = float(np.mean(np.abs(samples)**2))
+        if power_lin <= 0:
+            return None, None
+
+        rssi_dbfs = 10.0 * np.log10(power_lin + 1e-30)
+
+        if self.cal_offset_dbm is not None:
+            rssi_dbm = rssi_dbfs + self.cal_offset_dbm - self.total_sdr_gain_db
+            return rssi_dbm, 'dBm'
+        return rssi_dbfs, 'dBFS'
+
     # ------------------------------------------------------------------
     # SNR ESTIMATION
     # Uses Welch Power Spectral Density (PSD) — signal power is in the occupied bandwidth,
     # noise power is in the spectral guard regions.
     # ------------------------------------------------------------------
     def _estimate_snr(self, samples):
+        """
+        Modulation-agnostic SNR via PSD partitioning.
+        Signal band: ±(Rs(1+α))/2 around DC (assumes signal already centered).
+        Noise band : spectrum outside (1.3 × signal half-BW), within Nyquist.
+        """
+        if len(samples) < 512:
+            return None, None
+
         freqs, psd = welch(samples, fs=self.samp_rate,
-                           nperseg=512, return_onesided=False)
-        
-        # output of welch orders frequency bins in unintuitive manner of positive samples then negative
-        # for example if you had a bandwidth of 2 MHz with bins of 1MHz surrounding a center frequency of 0 you'd see [0, 1, -1] instead of what you'd expect [-1, 0, 1]
-        # to organize this into the intuitive manner you need to call np.fft.fftshift()
+                        nperseg=min(1024, len(samples)),
+                        return_onesided=False)
         freqs = np.fft.fftshift(freqs)
         psd   = np.fft.fftshift(psd)
 
-        # Occupied bandwidth for GFSK ≈ symbol_rate * 2 * h
-        # With sensitivity=0.4, h ≈ sensitivity * samples_per_symbol / pi ≈ 0.51
-        # Occupied BW ≈ 25000 * 2 * 0.51 ≈ 25.5 kHz — use 30 kHz to be safe
-        h = self.sensitivity * (self.samples_per_symbol / np.pi)
-        symbol_rate = self.samp_rate/self.samples_per_symbol
-        signal_bw_hz = np.ceil(symbol_rate * 2 * h)
-        sig_mask  = np.abs(freqs) <= (signal_bw_hz / 2)
+        sig_half_bw   = self.signal_bw_hz / 2.0
+        guard_inner   = sig_half_bw * 1.3        # leave a small skirt
+        nyquist       = self.samp_rate / 2.0
 
-        # Signal occupies roughly ±13 kHz (with corrected h)
-        # LPF passband is flat to ~37.5 kHz
-        # So 20-30 kHz is flat passband noise, well outside the signal
-        noise_mask = (np.abs(freqs) > 20e3) & (np.abs(freqs) <= 30e3)
-        
+        sig_mask   = np.abs(freqs) <= sig_half_bw
+        noise_mask = (np.abs(freqs) > guard_inner) & (np.abs(freqs) <= nyquist)
 
-        if noise_mask.sum() == 0 or sig_mask.sum() == 0:
+        if sig_mask.sum() == 0 or noise_mask.sum() == 0:
             return None, None
 
-        p_signal = np.mean(psd[sig_mask])
-        p_noise  = np.mean(psd[noise_mask])
+        p_sig_plus_noise = float(np.mean(psd[sig_mask]))      # signal+noise in passband
+        p_noise_density  = float(np.mean(psd[noise_mask]))    # noise PSD outside
 
-        if p_noise <= 0 or p_signal <= 0:
+        if p_noise_density <= 0 or p_sig_plus_noise <= p_noise_density:
             return None, None
 
-        snr_db = None
+        snr_db = 10.0 * np.log10((p_sig_plus_noise - p_noise_density) / p_noise_density)
 
-        try:
-            snr_db = 10 * np.log10((p_signal - p_noise) / p_noise)
-        except Exception as e:
-            pass
+        noise_floor = 10.0 * np.log10(p_noise_density + 1e-30)
+        if self.cal_offset_dbm is not None:
+            noise_floor = noise_floor + self.cal_offset_dbm - self.total_sdr_gain_db
 
-        if snr_db is None:
-            pass
-
-        # Noise floor in dBm — assumes 50 ohm, BladeRF normalized samples
-        # This gives relative dBm; for absolute you'd need the gain chain offset
-        noise_floor_dbm = 10 * np.log10(p_noise / 1e-3 + 1e-30)
-
-        return snr_db, noise_floor_dbm
+        return snr_db, noise_floor
 
     # ------------------------------------------------------------------
     # FREQUENCY OFFSET / DOPPLER
@@ -460,119 +478,46 @@ class RFMetricsProbe(gr.sync_block):
     # Change from baseline = Doppler.
     # ------------------------------------------------------------------
     def _estimate_freq_offset(self, samples):
-
-        # compute exact expected tone frequencies from first principles
-        if self.sensitivity != 0:
-            f_dev = (self.sensitivity * self.samp_rate) / (2 * np.pi)
-            expected_tones = np.array([+f_dev, -f_dev])
-
-
-        N   = len(samples)
-
-        # use hanning window as it is a moderately narrow window (narrow main lob) while having low enough side lobe amplitude
-        window = np.hanning(N)
-        windowed_samples = window * samples
-
-        # Add zero padding to increase frequency resolution
-        # Padding 4*N interpolates the spectrum giving finer grid of frequencies bins to find peak on
-        fft_size = 4*N
-        fft = np.fft.fft(windowed_samples, n=fft_size)
-        fft = np.fft.fftshift(fft) # fft holds the actual complex numbers representing magnitude and face of each frequency
-        freqs = np.fft.fftfreq(fft_size, d=1.0/self.samp_rate) # d is the sample spacing which would be equal to 1/samp rate
-        freqs = np.fft.fftshift(freqs) #freqs holds and array of the frequency values
-
-        # fft holds the actual complex number and freqs holds the array of frequencies
-
-        # np.abs caclulates the amplitudes
-        magnitudes = np.abs(fft)
-
-        # Don't look at entire spectrum for peaks look at around DC where you predict the signal to be
-
-
-        # search_bw_hz = 10000.0 what I had for general search not GFSK
-
-        # search within + or - search_bw of where the tone "should" be
-
-        search_bw_hz = f_dev * 0.3
-        measured_tones = []
-        for expected in expected_tones:
-            mask = np.abs(freqs - expected) <= search_bw_hz
-            if not np.any(mask):
-                continue
-            restricted = np.where(mask, magnitudes, 0.0)
-            peak_idx = np.argmax(restricted)
-
-
-            if 1 <= peak_idx <= len(magnitudes) - 2:
-                left = magnitudes[peak_idx - 1]
-                center = magnitudes[peak_idx]
-                right = magnitudes[peak_idx + 1]
-                # Parabolic interpolation formula — solves for the offset from peak_idx
-                denom = (left - 2*center + right)
-
-                if denom != 0:
-                    delta_bin = 0.5 * (left - right)/denom
-                else:
-                    delta_bin = 0
-                bin_spacing_hz = freqs[1] - freqs[0]
-                peak_freq = freqs[peak_idx] + delta_bin * bin_spacing_hz
-            else:
-                peak_freq = freqs[peak_idx]
-        
-        if len(measured_tones) < 1:
+        """
+        Carrier offset estimate via spectral centroid of the signal band.
+        Valid for any spectrum-symmetric modulation; biased only if the spectrum
+        is asymmetric (rare in practice — RRC and GFSK are both symmetric).
+        """
+        if len(samples) < 512:
             return 0.0, 0.0
 
-        search_mask = np.abs(freqs) <= search_bw_hz
-        # restricted_magnitudes = np.where(search_mask, magnitudes, 0.0)
-        # peak_idx   = np.argmax(restricted_magnitudes)
-        # peak_freq_coarse = freqs[peak_idx]
+        freqs, psd = welch(samples, fs=self.samp_rate,
+                        nperseg=min(2048, len(samples)),
+                        return_onesided=False)
+        freqs = np.fft.fftshift(freqs)
+        psd   = np.fft.fftshift(psd)
 
-        # Parabolic interpolatio of max amplitude around peak
-        # true peak almost never falls directly on bin center
-        # fitting a parabola through the peak and two neighbors
-        # --- Frequency offset = measured tone position minus expected position ---
-        # Average the offset across both tones for a more robust estimate
-        offsets = [measured - expected for expected, measured, _ in measured_tones]
-        freq_offset_hz = np.mean(offsets)
+        # Search band: 1.3× the nominal signal half-BW so a real offset
+        # doesn't push the signal out of the search window.
+        search_half_bw = self.signal_bw_hz / 2.0 * 1.3
+        band_mask = np.abs(freqs) <= search_half_bw
 
-        # --- You can also detect modulation index error ---
-        # If both tones are visible, the actual deviation tells you if the
-        # modulator is hitting the right depth
-        if len(measured_tones) == 2:
-            actual_separation = abs(measured_tones[0][1] - measured_tones[1][1])
-            expected_separation = 2 * f_dev
-            modulation_index_error = (actual_separation - expected_separation) / expected_separation
-        else:
-            modulation_index_error = None
+        if not band_mask.any():
+            return 0.0, 0.0
 
-        # Sanity Check - Reject implausible peaks
-        # Implausible peaks mean that the peak does not have a sificiently large amplitude differnece from noise
-        # Check your peak to median magnitude of your samples as a rough SNR check
-        # Tune the threshold (6x in this case) to link budget 
-        # noise_floor_estimate = np.median(magnitudes[search_mask])
-        # peak_magnitude = magnitudes[peak_idx]
-        
-        # if peak_magnitude < 6 * noise_floor_estimate:
-        #     # Not confident, reuse last estimate
-        #     if len(self._freq_history) > 0:
-        #         peak_freq = self._freq_history[-1]
-        #     else:
-        #         peak_freq = 0
+        # Subtract noise floor so the centroid isn't dragged toward DC by
+        # broadband noise. Use median of out-of-band PSD as the noise estimate.
+        out_of_band = psd[~band_mask]
+        noise_floor = float(np.median(out_of_band)) if out_of_band.size else 0.0
 
+        psd_signal = np.maximum(psd[band_mask] - noise_floor, 0.0)
+        weight     = psd_signal.sum()
 
+        if weight <= 0:
+            return 0.0, 0.0
 
-        # freq_offset is peak relative to 0 (center already tuned out by SDR)
-        freq_offset_hz = peak_freq
-        # History accumlation that uses collections.deque instead of pop
-        # pop is O(N) collections.deque is O(1)
-        #         # Accumulate history for baseline
+        freq_offset_hz = float(np.sum(freqs[band_mask] * psd_signal) / weight)
+
         self._freq_history.append(freq_offset_hz)
 
-        # Doppler: deviation from running median (removes static offset)
         if len(self._freq_history) >= 10:
-            # use trimmed slice to exclude most recent point from baseline
-            baseline = np.median(list(self._freq_history)[:-1])
-            doppler_hz = peak_freq - baseline
+            baseline   = np.median(list(self._freq_history)[:-1])
+            doppler_hz = freq_offset_hz - baseline
         else:
             doppler_hz = 0.0
 
@@ -584,40 +529,51 @@ class RFMetricsProbe(gr.sync_block):
     # Uses real part of the post-filter IQ samples.
     # ------------------------------------------------------------------
     def _estimate_jitter(self, samples):
-        real = np.real(samples)
+        """
+        Modulation-agnostic timing jitter.
 
-        # Find zero crossings via sign changes
-        signs = np.sign(real)
-        sign_changes = np.where(np.diff(signs) != 0)[0]
+        The squared envelope |x|^2 of any RRC-shaped signal carries a spectral
+        line at the symbol rate (Gardner 1986 / Oerder–Meyr 1988). The phase
+        of the Fourier coefficient at f = R_sym is proportional to the
+        symbol-timing offset:
 
-        if len(sign_changes) < 4:
+                tau_hat = -(T_sym / 2π) · arg(Σ_k |x[k]|^2 · exp(-j 2π k / sps))
+
+        Jitter is the standard deviation of tau_hat across short windows
+        (after detrending to remove residual frequency offset, which appears
+        as a linear timing ramp).
+        """
+        sps = self.samples_per_symbol
+        if sps < 2 or len(samples) < 32 * sps:
             return None
 
-        # Sub-sample interpolation for each crossing
-        # Because crossing don't happen exactly at an index, you assume that the between any idx and idx+1 the signal is a striagh line.
-        # so the line is y(t) = real[idx] + t * (real[idx+1] - real[idx])
-        # Because in this case we want to find t where the crossing actually happens (at 0) we set the equation = 0 and solve for t
-        #  0 = real[idx] + t * (real[idx+1] - real[idx])
-        #  frac = t = -real[idx] / (real[idx+1] - real[idx])
-        #  so the crossing happens at the time idx+frac
-        crossings = []
-        for idx in sign_changes:
-            if idx + 1 < len(real):
-                frac = -real[idx] / (real[idx+1] - real[idx] + 1e-30)
-                crossings.append(idx + frac)
+        env_sq = np.abs(samples) ** 2
 
-        crossings = np.array(crossings)
+        window_symbols = 32
+        window_len     = int(window_symbols * sps)
+        n_windows      = len(env_sq) // window_len
+        if n_windows < 4:
+            return None
 
-        # Expected crossings at half-symbol intervals
-        # (zero crossings happen at ~0.5 and ~1.0 of each symbol period)
-        half_sps = self.samples_per_symbol / 2.0
-        # you round where crossing is divided by the half sps to snap it to the the expected position
-        expected = np.round(crossings / half_sps) * half_sps
+        T_sym  = 1.0 / self.symbol_rate
+        phases = np.empty(n_windows)
 
-        timing_errors_samples = crossings - expected
-        timing_errors_sec     = timing_errors_samples / self.samp_rate
-        rms_jitter_ns         = np.std(timing_errors_sec) * 1e9
+        for i in range(n_windows):
+            chunk = env_sq[i * window_len : (i + 1) * window_len]
+            k     = np.arange(len(chunk))
+            X     = np.sum(chunk * np.exp(-1j * 2 * np.pi * k / sps))
+            phases[i] = np.angle(X)
 
+        # Unwrap so a residual frequency offset shows as a linear ramp,
+        # which detrending then removes.
+        phases_unwrapped = np.unwrap(phases)
+        tau_sec          = -T_sym * phases_unwrapped / (2 * np.pi)
+
+        x        = np.arange(len(tau_sec))
+        slope, b = np.polyfit(x, tau_sec, 1)
+        residual = tau_sec - (slope * x + b)
+
+        rms_jitter_ns = float(np.std(residual)) * 1e9
         return rms_jitter_ns
 
     # ------------------------------------------------------------------
@@ -634,6 +590,7 @@ class RFMetricsProbe(gr.sync_block):
             snr_db, noise_dbm = self._estimate_snr(window)
             freq_offset, doppler = self._estimate_freq_offset(window)
             jitter = self._estimate_jitter(window)
+            rssi, _ = self._estimate_rssi(window)
 
             # Only push if all estimates succeeded
             if all(v is not None for v in [snr_db, noise_dbm, freq_offset, doppler, jitter]):
@@ -642,7 +599,8 @@ class RFMetricsProbe(gr.sync_block):
                     noise_floor_dbm=noise_dbm,
                     freq_offset_hz=freq_offset,
                     doppler_hz=doppler,
-                    jitter_ns=jitter
+                    jitter_ns=jitter,
+                    rssi=rssi,
                 )
 
                 # # JUST FOR SIMULATION
