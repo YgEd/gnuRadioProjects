@@ -92,6 +92,8 @@ class MetricsLogger:
         # variable to mark when the object is active to know when to cleanup
         self.active = None
 
+        self.sql_table = f'{direction}_metrics'
+
         # Latest IQ-derived metrics — updated by RFMetricsProbe
         self._iq_metrics = {
             'snr_db':            None,
@@ -131,7 +133,7 @@ class MetricsLogger:
         print('[MetricLogger] Successfully connected to db, writing to db...')
         
         conn.execute(f"""
-            CREATE TABLE IF NOT EXISTS {self.direction}_metrics (
+            CREATE TABLE IF NOT EXISTS {self.sql_table} (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp   TEXT,
                 tx_rx       TEXT,
@@ -166,7 +168,7 @@ class MetricsLogger:
         
         batch_size = 200
         sql = (
-            f"INSERT INTO metrics ({', '.join(self.headers)}) "
+            f"INSERT INTO {self.sql_table} ({', '.join(self.headers)}) "
             f"VALUES ({', '.join('?' * len(self.headers))})"
         )
 
@@ -297,7 +299,6 @@ class MetricsLogger:
                 'doppler_bin': 'unknown',
                 'jitter_bin': 'unknown',
                 'ber_bin': 'unknown',
-                'crc'
                 'packet_success': False
             })
 
