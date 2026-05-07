@@ -60,13 +60,11 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
-        self.samp_rate = samp_rate = 200e3
-        self.sps = sps = 8
-        self.symbol_rate = symbol_rate = samp_rate/sps
-
+     
+        self.symbol_rate = 500e3
         self.sdr_samp_rate = 4e6
-        self.center_freq = 915e6
-        self.samples_per_symbol = 8
+        self.sps = sps = int(self.sdr_samp_rate / self.symbol_rate)
+
         self.sensitivity = 0.785   # h=0.5
         self.bt = 0.5
         self.gain_mu = 0.08
@@ -77,7 +75,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.tx_decimation = 1
         self.fractional_bw = 0.49
         self.tx_gain_scalar = 0.5
-        self.sdr_RF_gain = 15
+        self.sdr_RF_gain = 10
 
         # modulation scheme selection variables
         self.current_mode = 0
@@ -178,8 +176,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.metrics_logger = MetricsLogger(getGain=self.getSDRgain, getMod=self.getMod, direction='TX')
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
-            samp_rate=self.samp_rate,
-            samples_per_symbol=self.samples_per_symbol,
+            samp_rate=self.sdr_samp_rate,
+            samples_per_symbol=self.sps,
             center_freq=self.center_freq,
             logger=self.metrics_logger,
             sensitivity=self.sensitivity
@@ -204,8 +202,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.osmosdr_sink.set_antenna('TX1', 0)
         self.osmosdr_sink.set_freq_corr(0, 0)
         self.osmosdr_sink.set_gain(self.sdr_RF_gain, 0)
-        self.osmosdr_sink.set_if_gain(15, 0)
-        self.osmosdr_sink.set_bb_gain(15, 0)
+        self.osmosdr_sink.set_if_gain(10, 0)
+        self.osmosdr_sink.set_bb_gain(10, 0)
         self.osmosdr_sink.set_bandwidth(0, 0)
 
         ##################################################

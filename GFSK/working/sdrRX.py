@@ -62,12 +62,13 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # Variables
         ##################################################
         self.samp_rate = samp_rate = 200e3
-        self.sps = sps = 8
-        self.symbol_rate = symbol_rate = samp_rate/sps
 
+        self.symbol_rate = 500e3
         self.sdr_samp_rate = 4e6
+        self.sps = sps = int(self.sdr_samp_rate / self.symbol_rate)
+
+
         self.center_freq = 915e6
-        self.samples_per_symbol = 8
         self.sensitivity = 0.785   # h=0.5
         self.bt = 0.5
         self.gain_mu = 0.08
@@ -75,7 +76,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.omega_relative_limit = 0.02
         self.freq_error = 0.0
         self.fractional_bw = 0.49
-        self.sdr_RF_gain = 15
+        self.sdr_RF_gain = 10
         self.rx_decimation = 20
         self.sps_wander = 0.05
 
@@ -162,8 +163,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             taps=firdes.low_pass(
                 gain=1,
                 sampling_freq=self.sdr_samp_rate,
-                cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
-                transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
+                cutoff_freq=(self.samp_rate / self.sps) * (1 + self.bt) * 1.25,
+                transition_width=(self.samp_rate / self.sps) * (1 + self.bt) * 1.25 * 0.25
             ),
             center_freq=0,    # in kHZ? adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
@@ -179,7 +180,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
         # Strips off local oscillator frequency offset
         self.fll = digital.fll_band_edge_cc(
-            self.samples_per_symbol,  # sps at FLL input
+            self.sps,  # sps at FLL input
             0.35,                      # rolloff (must match your TX RRC alpha)
             44,                        # filter size
             (2 * 3.14159 / 100)        # loop BW
@@ -195,7 +196,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.metrics_logger.start()
         self.metrics_probe = RFMetricsProbe(
             samp_rate=self.samp_rate,
-            samples_per_symbol=self.samples_per_symbol,
+            samples_per_symbol=self.sps,
             center_freq=self.center_freq,
             logger=self.metrics_logger,
             sensitivity=self.sensitivity
@@ -226,8 +227,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.osmosdr_source.set_dc_offset_mode(0, 0) # automatic DC correction
         self.osmosdr_source.set_iq_balance_mode(0, 0) # automatic
         self.osmosdr_source.set_gain(self.sdr_RF_gain, 0)
-        self.osmosdr_source.set_if_gain(15, 0)
-        self.osmosdr_source.set_bb_gain(15, 0)
+        self.osmosdr_source.set_if_gain(10, 0)
+        self.osmosdr_source.set_bb_gain(10, 0)
         self.osmosdr_source.set_bandwidth(0, 0)
 
         ##################################################
