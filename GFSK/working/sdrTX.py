@@ -61,10 +61,10 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         # Variables
         ##################################################
      
-        self.symbol_rate = 2500
-        self.samp_Rate = 100e3
+        self.symbol_rate = 50000
+        self.samp_rate = 100e3
         self.sdr_samp_rate = 2e6
-        self.sps = sps = int(self.sdr_samp_rate / self.symbol_rate)
+        self.sps = sps = int(self.samp_rate / self.symbol_rate)
         self.center_freq = 915e6
 
         self.sensitivity = 0.785   # h=0.5
