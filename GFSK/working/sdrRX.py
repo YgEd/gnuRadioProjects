@@ -61,6 +61,12 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
+<<<<<<< Updated upstream
+=======
+        self.samp_rate = samp_rate = 100e3
+        self.sps = sps = 8
+        self.symbol_rate = symbol_rate = samp_rate/sps
+>>>>>>> Stashed changes
 
         self.symbol_rate = 500e3
         self.sdr_samp_rate = 4e6
