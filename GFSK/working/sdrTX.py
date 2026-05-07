@@ -64,6 +64,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.symbol_rate = 500e3
         self.sdr_samp_rate = 4e6
         self.sps = sps = int(self.sdr_samp_rate / self.symbol_rate)
+        self.center_freq = 915e6
 
         self.sensitivity = 0.785   # h=0.5
         self.bt = 0.5
@@ -71,7 +72,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.mu = 0.5
         self.omega_relative_limit = 0.02
         self.freq_error = 0.0
-        self.tx_interpolation = 20
+        self.tx_interpolation = 1
         self.tx_decimation = 1
         self.fractional_bw = 0.49
         self.tx_gain_scalar = 0.5
@@ -148,15 +149,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 #       #################################################
         # DSP Blocks
         # global rrc_taps block
-        nfilts = 32
-        rrc_taps = firdes.root_raised_cosine(
-            nfilts, #gain (= nfilts for polyphase)
-            nfilts,# sampling rate
-            1.0 /float(self.sps), # normalized symbol rate
-            0.35, #excess BW
-            11 * self.sps * nfilts #num of taps
-        )
-
+    
         self.tx_amplitude = blocks.multiply_const_cc(self.tx_gain_scalar)
         
 
