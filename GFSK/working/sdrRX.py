@@ -65,7 +65,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.sps = sps = 8
         self.symbol_rate = symbol_rate = samp_rate/sps
 
-        self.sdr_samp_rate = 2e6
+        self.sdr_samp_rate = 4e6
         self.center_freq = 915e6
         self.samples_per_symbol = 8
         self.sensitivity = 0.785   # h=0.5
