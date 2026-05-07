@@ -1,0 +1,1 @@
+timestamp,tx_rx,gain,frequency,modulation,RSSI,snr_db,noise_floor_dbm,freq_offset_hz,doppler_hz,jitter_ns,ber,snr_bin,channelnoise_bin,freq_offset_bin,doppler_bin,jitter_bin,ber_bin,failure_level,packet_success,message,payload_len,payload_len_crc,payload_crc,raw_payload_bytes,whitened_payload_bytes,raw_packet_bytes

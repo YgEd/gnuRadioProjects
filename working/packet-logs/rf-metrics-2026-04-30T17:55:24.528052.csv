@@ -1,0 +1,2 @@
+timestamp,tx_rx,gain,frequency,snr_db,noise_floor_dbm,freq_offset_hz,doppler_hz,jitter_ns,ber,snr_bin,channelnoise_bin,freq_offset_bin,doppler_bin,jitter_bin,ber_bin,packet_success,message,payload_len,payload_len_crc,payload_crc,raw_payload_bytes,whitened_payload_bytes,raw_packet_bytes
+2026-04-30T17:58:24.301082,RX,35,915000000.0,nan,-43.1690299174475,0.0,0.0,5665.940572182769,1.0,good,high,low,negligible,low,poor,failure,Length field FEC decode failed (CRC-8 mismatch after Viterbi),33712,00,00 00,,,
