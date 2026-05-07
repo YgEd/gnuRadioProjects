@@ -72,7 +72,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.mu = 0.5
         self.omega_relative_limit = 0.02
         self.freq_error = 0.0
-        self.tx_interpolation = 1
+        self.tx_interpolation = 20
         self.tx_decimation = 1
         self.fractional_bw = 0.49
         self.tx_gain_scalar = 0.5

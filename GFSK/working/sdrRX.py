@@ -108,7 +108,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             self.samp_rate,# sampling rate
             self.symbol_rate, # normalized symbol rate
             0.35, #excess BW
-            11 * self.sps * nfilts #num of taps
+            nfilts #num of taps
         )
 
         ##################################################
@@ -119,12 +119,13 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.filter_bw = (2*np.pi)/100
 
         # Polyphase Clock Sync blocks
-        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, 
+        self.pfb_0 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(
+            self.sps, 
             self.filter_bw, 
             rrc_taps, nfilts, 
             nfilts/2, 
             self.sps_wander, # +/- how far the pfb can wander from base samples/symbol rate
-            self.sps)
+            1)
         self.pfb_1 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
         self.pfb_2 = self.pfb_clock_sync = digital.pfb_clock_sync_ccf(self.sps, self.filter_bw, rrc_taps, nfilts, nfilts/2, self.sps_wander, self.sps)
 
