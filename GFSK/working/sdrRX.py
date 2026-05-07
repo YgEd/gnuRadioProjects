@@ -64,7 +64,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
 
         self.samp_rate = 100e3
         self.sdr_samp_rate = 2e6
-        self.symbol_rate = 25000
+        self.symbol_rate = 50000
         self.sps = sps = int(self.samp_rate / self.symbol_rate)
         self.samp_rate = samp_rate = int(self.symbol_rate * self.sps)
         self.rx_decimation = int(self.sdr_samp_rate/samp_rate)
@@ -165,8 +165,8 @@ class modSwitcher(gr.top_block, Qt.QWidget):
             taps=firdes.low_pass(
                 gain=1,
                 sampling_freq=self.sdr_samp_rate,
-                cutoff_freq=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25,
-                transition_width=(self.samp_rate / self.samples_per_symbol) * (1 + self.bt) * 1.25 * 0.25
+                cutoff_freq=(self.samp_rate / self.sps) * (1 + self.bt) * 1.25,
+                transition_width=(self.samp_rate / self.sps) * (1 + self.bt) * 1.25 * 0.25
             ),
             center_freq=0,    # in kHZ? adjust if you have a known freq offset
             sampling_freq=self.sdr_samp_rate
@@ -311,7 +311,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
  
 
     def getMod(self):
-        return self.mod_strs[self.curret_mode]
+        return self.mod_strs[self.current_mode]
 
     def getSDRgain(self):
         return self.sdr_RF_gain
