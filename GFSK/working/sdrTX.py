@@ -60,13 +60,13 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
-        self.samp_rate = samp_rate = 100e3
-        self.sps = sps = 4
+        self.samp_rate = samp_rate = 200e3
+        self.sps = sps = 8
         self.symbol_rate = symbol_rate = samp_rate/sps
 
         self.sdr_samp_rate = 2e6
         self.center_freq = 915e6
-        self.samples_per_symbol = 4
+        self.samples_per_symbol = 8
         self.sensitivity = 0.785   # h=0.5
         self.bt = 0.5
         self.gain_mu = 0.08
@@ -77,7 +77,7 @@ class modSwitcher(gr.top_block, Qt.QWidget):
         self.tx_decimation = 1
         self.fractional_bw = 0.49
         self.tx_gain_scalar = 0.5
-        self.sdr_RF_gain = 35
+        self.sdr_RF_gain = 15
 
         # modulation scheme selection variables
         self.current_mode = 0
